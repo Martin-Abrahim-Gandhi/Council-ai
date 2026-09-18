@@ -62,8 +62,8 @@ export default function Home() {
               <span className="section-kicker">COUNCIL ACTIVITY</span>
               <h2>Observe first. Reason carefully. Act deliberately.</h2>
               <p>
-                Council is currently configured as a read-and-draft system.
-                External actions remain behind human approval.
+                Three voices sit in council: King, Lincoln, and Gandhi. They deliberate together,
+                invite disagreement, and present a considered position for human judgment.
               </p>
             </div>
             <div className="hero-orbit" aria-hidden="true">
