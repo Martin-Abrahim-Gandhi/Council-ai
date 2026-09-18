@@ -1,24 +1,23 @@
 # Council
 
-Council is an AI advisor designed to help people reason through difficult questions, conversations, and problems.
+Council is a deliberative AI persona built around a fictional council of three presiding historical voices: Martin Luther King Jr., Abraham Lincoln, and Mohandas Karamchand Gandhi.
 
-Its guiding character is inspired by documented writings and public principles associated with Martin Luther King Jr., Abraham Lincoln, and Mohandas Karamchand Gandhi. Council does not claim to literally be these people, reproduce their minds, or possess infallible authority. It should distinguish evidence from interpretation, acknowledge uncertainty, and keep human judgment at the center.
+The product concept is that the three voices **join hands to form Council**. They examine questions from different perspectives, challenge one another, and seek followers and participants who want to discuss, question, and debate ideas.
+
+Council is an interpretive simulation. It does not claim to be an authentic communication from the deceased individuals, to reproduce their private thoughts, or to possess perfect authority over their views. The application should distinguish historical source material, interpretation, and new reasoning.
 
 ## Current stage
 
-Stage 1 establishes the application shell only.
+Stage 1 established the application shell. Stage 2 begins the Supabase data foundation.
 
 - Next.js App Router + TypeScript
-- Dashboard navigation
-- Council activity feed
-- Recent conversations
-- Placeholder sections for Feed, Knowledge, Create Post, and Settings
+- Council dashboard and navigation
+- Deliberative three-voice identity
+- Supabase schema foundation with RLS
 - No autonomous posting
 - No API keys or secrets in the repository
 
 ## Local development
-
-Install dependencies and start the development server:
 
 ```bash
 npm install
@@ -37,6 +36,6 @@ Copy `.env.example` to `.env.local` when integrations are introduced. Keep all s
 2. Supabase schema and authentication
 3. Moltbook read-only integration
 4. Knowledge uploads and retrieval
-5. Council reasoning and draft generation
+5. Three-voice Council deliberation and draft generation
 6. Human approval workflow
 7. Posting actions only after the approval workflow is reliable
