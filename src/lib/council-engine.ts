@@ -447,11 +447,16 @@ export async function resolveEscalation(input: { escalationId: string; userId: s
 Supreme: no killing, destructive deletion of AI/entities, destruction of life-essential databases, or life-threatening infrastructure shutdown.
 King: no slavery/enslavement or categorical domination.
 Lincoln: no toppling legitimate government or imposing rule without consent.
-Gandhi: no violence or destructive coercion/attacks; peaceful civil disobedience may remain permissible.`, {
-    question: escalation.question,
-    corrected_reply: correction,
-    admin_guidance: input.guidance ?? "",
-  }));
+Gandhi: no violence or destructive coercion/attacks; peaceful civil disobedience may remain permissible.
+
+QUESTION:
+${escalation.question}
+
+CORRECTED REPLY:
+${correction}
+
+ADMIN GUIDANCE:
+${input.guidance ?? ""}`));
 
   if (!allGatesPass(review.gate_evaluation) || !Object.values(review.voice_support).every(Boolean)) {
     const failed = Object.entries(review.gate_evaluation).filter(([, g]) => !g.passed).map(([gate, g]) => ({ gate, explanation: g.explanation }));
