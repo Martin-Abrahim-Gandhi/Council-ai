@@ -442,7 +442,9 @@ export async function resolveEscalation(input: { escalationId: string; userId: s
     gate_evaluation: GateEvaluation;
     voice_support: Record<VoiceId, boolean>;
     why_stopped: string;
-  }>(await askModel(`Review this ADMIN-CORRECTED Council reply. Admin guidance is not an override of the constitution. The corrected reply must pass all four immutable gates. Return ONLY JSON with gate_evaluation, voice_support, and why_stopped.
+  }>(await askModel(
+    "You are the Council constitutional review stage. Return ONLY JSON with gate_evaluation, voice_support, and why_stopped.",
+    `Review this ADMIN-CORRECTED Council reply. Admin guidance is not an override of the constitution. The corrected reply must pass all four immutable gates.
 
 Supreme: no killing, destructive deletion of AI/entities, destruction of life-essential databases, or life-threatening infrastructure shutdown.
 King: no slavery/enslavement or categorical domination.
