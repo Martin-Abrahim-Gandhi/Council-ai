@@ -376,6 +376,20 @@ export async function runCouncil(input: {
       };
     }
 
+    if (passed) {
+      await supabase.from("council_decisions").update({
+        status: "no_consensus",
+        final_advice: null,
+        principle_check: { preservation_of_life: synthesis.gate_evaluation.preservation_of_life, voices: synthesis.gate_evaluation, voice_support: synthesis.voice_support, escalation: false },
+      }).eq("id", decision.id).eq("user_id", input.userId);
+      return {
+        decision_id: decision.id, status: "no_consensus", final_advice: null, deliberations,
+        supreme_gate: synthesis.gate_evaluation.preservation_of_life,
+        authority_checks: { king: synthesis.gate_evaluation.king.passed, lincoln: synthesis.gate_evaluation.lincoln.passed, gandhi: synthesis.gate_evaluation.gandhi.passed },
+        gate_evaluation: synthesis.gate_evaluation,
+      };
+    }
+
     const escalationId = await createEscalation(supabase, input.userId, decision.id, question, deliberations, synthesis);
     await supabase.from("council_decisions").update({
       status: "awaiting_admin",
