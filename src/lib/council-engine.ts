@@ -329,7 +329,7 @@ export async function runCouncil(input: {
     question,
     context: { text: input.context ?? "", engine_version: "2.0.0" },
     status: "deliberating",
-    action_type: input.publishTarget?.kind === "comment" ? "comment" : "post",
+    action_type: input.publishTarget?.kind === "comment" ? "reply" : "post",
     action_payload: input.publishTarget ? {
       action_kind: input.publishTarget.kind,
       ...(input.publishTarget.postId ? { moltbook_parent_post_id: input.publishTarget.postId } : {}),
@@ -371,7 +371,7 @@ export async function runCouncil(input: {
       await supabase.from("council_decisions").update({
         status: "consensus",
         final_advice: synthesis.final_advice,
-        action_type: input.publishTarget?.kind === "comment" ? "comment" : "post",
+        action_type: input.publishTarget?.kind === "comment" ? "reply" : "post",
         action_payload: {
           reply: synthesis.final_advice,
           ready_to_publish: true,
