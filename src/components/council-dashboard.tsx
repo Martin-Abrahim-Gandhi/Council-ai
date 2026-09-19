@@ -1,12 +1,164 @@
 "use client";
 
 import { useState } from "react";
-import { councilVoices, conversations } from "@/lib/council-data";
+import { councilVoices, type CouncilDecision } from "@/lib/council-data";
 
-export default function CouncilDashboard({ email }: { email: string }) {
+type DashboardData = {
+  conversations: Array<{ id: string; title: string | null; platform: string; status: string; updated_at: string }>;
+  decisions: CouncilDecision[];
+  activity: Array<{ id: string; event_type: string; title: string; detail: string | null; created_at: string }>;
+};
+
+function formatTime(value: string) {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+}
+
+export default function CouncilDashboard({ email, data }: { email: string; data: DashboardData }) {
   const [active, setActive] = useState("Dashboard");
-  const [selected, setSelected] = useState(conversations[0]);
-  const [approval, setApproval] = useState("pending");
-  const activity = [["Reading","Moltbook feed","Read-only · waiting for integration"],["Deliberating","Three voices configured","King · Lincoln · Gandhi"],["Drafting","Human approval gate","No external action without approval"]];
-  return <main className="app-shell"><aside className="sidebar"><div className="brand"><div className="brand-mark">C</div><div><div className="brand-name">COUNCIL</div><div className="brand-subtitle">Thought · Reason · Action</div></div></div><nav className="nav">{["Dashboard","Conversations","Feed","Knowledge","Create Post","Settings"].map(x=><button key={x} className={active===x?"nav-item active":"nav-item"} onClick={()=>setActive(x)}>{x}</button>)}</nav><div className="voice-stack"><span className="section-kicker">THE THREE VOICES</span>{councilVoices.map(v=><div className="voice" key={v.id}><span className="voice-mark">{v.name[0]}</span><span><strong>{v.name}</strong><small>{v.role}</small></span></div>)}</div><div className="sidebar-footer"><span className="status-dot"/>Signed in as {email}</div></aside><section className="main"><header className="topbar"><div><p className="eyebrow">COUNCIL / {active.toUpperCase()}</p><h1>{active}</h1></div><div className="header-status"><span className="pulse"/>Human approval required</div></header><div className="content">{active==="Dashboard"&&<><section className="hero"><div><span className="section-kicker">A DELIBERATIVE AI</span><h2>Three voices. One council. A conversation worth having.</h2><p>King, Lincoln, and Gandhi are represented as an interpretive council. They challenge one another, examine evidence, and present a considered position for human judgment.</p><div className="hero-actions"><button className="primary" onClick={()=>setActive("Conversations")}>Open conversations</button><button className="secondary" onClick={()=>setActive("Create Post")}>Start a draft</button></div></div><div className="seal">REASON <b>∴</b></div></section><section className="stats"><div><span>MODE</span><strong>READ-ONLY</strong><small>No autonomous external actions</small></div><div><span>VOICES</span><strong>03</strong><small>King · Lincoln · Gandhi</small></div><div><span>APPROVALS</span><strong>01</strong><small>Draft waiting for review</small></div><div><span>KNOWLEDGE</span><strong>READY</strong><small>Document layer connected</small></div></section><section className="two-col"><div className="panel"><div className="panel-heading"><div><span className="section-kicker">LIVE LOG</span><h3>Council activity</h3></div><span className="muted">Stage 1</span></div><div className="activity-list">{activity.map((x,i)=><div className="activity-row" key={x[0]}><span className={i===0?"activity-dot active":"activity-dot"}/><div><strong>{x[0]}</strong><span>{x[1]}</span></div><small>{x[2]}</small></div>)}</div></div><div className="panel approval-panel"><div className="panel-heading"><div><span className="section-kicker">HUMAN REVIEW</span><h3>Draft awaiting approval</h3></div><span className={"badge "+approval}>{approval}</span></div><span className="draft-type">Reply · AI Ethics</span><blockquote>“A useful question is not only what an AI can decide, but what responsibility remains with the people who design, deploy, and authorize that decision.”</blockquote>{approval==="pending"?<div className="approval-actions"><button className="primary" onClick={()=>setApproval("approved")}>Approve</button><button className="secondary" onClick={()=>setApproval("rejected")}>Reject</button></div>:<div className="review-result">Draft marked <strong>{approval}</strong>. External posting remains disabled in Stage 1.</div>}</div></section><section className="conversation-section"><div className="panel-heading"><div><span className="section-kicker">RECENT</span><h3>Recent conversations</h3></div><button className="text-link" onClick={()=>setActive("Conversations")}>View all →</button></div><div className="conversation-grid">{conversations.map(c=><button className="conversation-card" key={c.id} onClick={()=>{setSelected(c);setActive("Conversations")}}><div className="card-topline"><span className="conversation-type">{c.type}</span><span className="message-count">{c.messages} messages</span></div><h4>{c.title}</h4><p>{c.preview}</p><div className="card-footer"><span>Last activity: {c.lastActivity}</span><span className="arrow">↗</span></div></button>)}</div></section></>}{active==="Conversations"&&<section className="workspace"><div className="list-panel">{conversations.map(c=><button key={c.id} onClick={()=>setSelected(c)} className={selected.id===c.id?"list-item selected":"list-item"}><span>{c.type}</span><strong>{c.title}</strong><small>{c.messages} messages</small></button>)}</div><div className="thread panel"><span className="section-kicker">DELIBERATION</span><h2>{selected.title}</h2><p className="thread-intro">{selected.preview}</p>{[["King","Human dignity and responsibility come first."],["Lincoln","Test the principle against civic responsibility and disagreement."],["Gandhi","Examine conscience, means and ends, and the reduction of harm."]].map(v=><div className="voice-turn" key={v[0]}><b>{v[0]}</b><p>{v[1]}</p></div>)}<div className="council-position"><span className="section-kicker">PROPOSED COUNCIL POSITION</span><p>This is an interpretive synthesis for the user to question, not a historical communication.</p></div></div></section>}{active==="Feed"&&<section className="empty-state panel"><span className="section-kicker">FEED</span><h2>Moltbook reading comes next.</h2><p>The read-only interface is ready. Moltbook will be integrated later.</p></section>}{active==="Knowledge"&&<section className="empty-state panel"><span className="section-kicker">KNOWLEDGE</span><h2>Your council library.</h2><p>The Supabase document layer is ready for the next implementation step.</p></section>}{active==="Create Post"&&<section className="composer panel"><span className="section-kicker">CREATE</span><h2>Draft something for the council.</h2><label>Title<input placeholder="What should the council discuss?"/></label><label>Context<textarea rows={7} placeholder="Give the council the question, evidence, or conversation context..."/></label><div className="approval-note">Nothing will be published automatically. Every external action passes through human approval.</div></section>}{active==="Settings"&&<section className="settings-grid"><div className="panel"><span className="section-kicker">IDENTITY</span><h2>Council</h2><p>Three fictionalized interpretive voices deliberating together: Martin Luther King Jr., Abraham Lincoln, and Mohandas Karamchand Gandhi.</p><div className="setting-row"><span>External actions</span><strong>Disabled</strong></div><div className="setting-row"><span>Human approval</span><strong>Required</strong></div></div><div className="panel"><span className="section-kicker">ACCOUNT</span><h2>Authenticated</h2><div className="setting-row"><span>Email</span><strong>{email}</strong></div><div className="setting-row"><span>Database</span><strong>Supabase</strong></div></div></section>}</div></section></main>;
+  const latest = data.decisions[0];
+  const consensusCount = data.decisions.filter((d) => d.status === "consensus" || d.status === "acted").length;
+
+  return (
+    <main className="app-shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-mark">C</div>
+          <div><div className="brand-name">COUNCIL</div><div className="brand-subtitle">Thought · Reason · Action</div></div>
+        </div>
+
+        <nav className="nav">
+          {["Dashboard", "Conversations", "Feed", "Knowledge", "Create Post", "Settings"].map((item) => (
+            <button key={item} className={active === item ? "nav-item active" : "nav-item"} onClick={() => setActive(item)}>
+              {item}
+            </button>
+          ))}
+        </nav>
+
+        <div className="voice-stack">
+          <span className="section-kicker">THE THREE VOICES</span>
+          {councilVoices.map((voice) => (
+            <div className="voice" key={voice.id}>
+              <span className="voice-mark">{voice.name[0]}</span>
+              <span><strong>{voice.name}</strong><small>{voice.role}</small></span>
+            </div>
+          ))}
+        </div>
+
+        <div className="sidebar-footer"><span className="status-dot" />Signed in as {email}</div>
+      </aside>
+
+      <section className="main">
+        <header className="topbar">
+          <div><p className="eyebrow">COUNCIL / {active.toUpperCase()}</p><h1>{active}</h1></div>
+          <div className="header-status"><span className="pulse" />Autonomous · three-voice consensus</div>
+        </header>
+
+        <div className="content">
+          {active === "Dashboard" && (
+            <>
+              <section className="hero">
+                <div>
+                  <span className="section-kicker">AN AUTONOMOUS DELIBERATIVE COUNCIL</span>
+                  <h2>Three voices. One collective judgment.</h2>
+                  <p>
+                    King, Lincoln, and Gandhi are represented as interpretive voices. Each independently tests proposed advice against documented principles. Council acts only when the collective advice survives all three principle checks.
+                  </p>
+                  <div className="hero-actions">
+                    <button className="primary" onClick={() => setActive("Conversations")}>Open conversations</button>
+                    <button className="secondary" onClick={() => setActive("Create Post")}>Ask the Council</button>
+                  </div>
+                </div>
+                <div className="seal">CONSENSUS <b>∴</b></div>
+              </section>
+
+              <section className="stats">
+                <div><span>MODE</span><strong>AUTONOMOUS</strong><small>No human approval gate</small></div>
+                <div><span>VOICES</span><strong>03</strong><small>Independent principle checks</small></div>
+                <div><span>CONSENSUS</span><strong>{consensusCount}</strong><small>Collective decisions recorded</small></div>
+                <div><span>CONVERSATIONS</span><strong>{data.conversations.length}</strong><small>Stored in Supabase</small></div>
+              </section>
+
+              <section className="two-col">
+                <div className="panel">
+                  <div className="panel-heading"><div><span className="section-kicker">LIVE LOG</span><h3>Council activity</h3></div><span className="muted">Persistent</span></div>
+                  <div className="activity-list">
+                    {data.activity.length === 0 ? (
+                      <div className="empty-row">No activity yet. The Council is ready for its first deliberation.</div>
+                    ) : data.activity.map((item, index) => (
+                      <div className="activity-row" key={item.id}>
+                        <span className={index === 0 ? "activity-dot active" : "activity-dot"} />
+                        <div><strong>{item.title}</strong><span>{item.detail ?? item.event_type}</span></div>
+                        <small>{formatTime(item.created_at)}</small>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="panel approval-panel">
+                  <div className="panel-heading">
+                    <div><span className="section-kicker">LATEST DECISION</span><h3>Collective advice</h3></div>
+                    <span className={"badge " + (latest?.status ?? "pending")}>{latest?.status ?? "ready"}</span>
+                  </div>
+                  {latest ? (
+                    <>
+                      <span className="draft-type">{latest.action_type ?? "none"} · {formatTime(latest.created_at)}</span>
+                      <blockquote>{latest.final_advice ?? "The three voices are still deliberating."}</blockquote>
+                    </>
+                  ) : (
+                    <div className="empty-state-inline">No decision has been recorded yet. When a question arrives, each voice will reason independently before Council reaches consensus.</div>
+                  )}
+                </div>
+              </section>
+
+              <section className="conversation-section">
+                <div className="panel-heading"><div><span className="section-kicker">RECENT</span><h3>Conversations</h3></div><button className="text-link" onClick={() => setActive("Conversations")}>View all →</button></div>
+                <div className="conversation-grid">
+                  {data.conversations.length === 0 ? (
+                    <div className="panel empty-state"><span className="section-kicker">CONVERSATIONS</span><h2>Nothing here yet.</h2><p>Moltbook conversations will appear here once the read layer is connected.</p></div>
+                  ) : data.conversations.map((conversation) => (
+                    <button className="conversation-card" key={conversation.id} onClick={() => setActive("Conversations")}>
+                      <div className="card-topline"><span className="conversation-type">{conversation.platform}</span><span className="message-count">{conversation.status}</span></div>
+                      <h4>{conversation.title ?? "Untitled conversation"}</h4>
+                      <div className="card-footer"><span>Updated {formatTime(conversation.updated_at)}</span><span className="arrow">↗</span></div>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            </>
+          )}
+
+          {active === "Conversations" && (
+            <section className="workspace">
+              <div className="list-panel">
+                {data.decisions.length === 0 ? <div className="empty-state-inline">No Council decisions yet.</div> : data.decisions.map((decision) => (
+                  <div key={decision.id} className="list-item">
+                    <span>{decision.status}</span><strong>{decision.question}</strong><small>{formatTime(decision.created_at)}</small>
+                  </div>
+                ))}
+              </div>
+              <div className="thread panel">
+                <span className="section-kicker">COUNCIL METHOD</span>
+                <h2>Advice must survive all three tests.</h2>
+                <p className="thread-intro">Consensus means the best collective advice the three voices can give, not a simple majority vote.</p>
+                {councilVoices.map((voice) => (
+                  <div className="voice-turn" key={voice.id}><b>{voice.name}</b><p>Independently examine the question, relevant evidence, and whether the proposed advice conflicts with this voice's documented principles.</p></div>
+                ))}
+                <div className="council-position"><span className="section-kicker">CONSENSUS RULE</span><p>No action when the proposed advice violates a core principle of any voice. Revise, deliberate again, or decline.</p></div>
+              </div>
+            </section>
+          )}
+
+          {active === "Feed" && <section className="empty-state panel"><span className="section-kicker">FEED</span><h2>Moltbook reading comes next.</h2><p>The autonomous decision layer is ready; the external feed connector is the next integration.</p></section>}
+          {active === "Knowledge" && <section className="empty-state panel"><span className="section-kicker">KNOWLEDGE</span><h2>The Council library.</h2><p>Historical sources and uploaded documents will become evidence for deliberation. Source evidence will remain distinguishable from Council interpretation.</p></section>}
+          {active === "Create Post" && <section className="composer panel"><span className="section-kicker">COUNCIL QUESTION</span><h2>Give the Council something to deliberate.</h2><label>Question<input placeholder="What should the Council consider?" /></label><label>Context<textarea rows={7} placeholder="Evidence, circumstances, or conversation context..." /></label><div className="approval-note">No human approval gate. The Council itself must reach consensus before an external action can be taken.</div></section>}
+          {active === "Settings" && (
+            <section className="settings-grid">
+              <div className="panel"><span className="section-kicker">IDENTITY</span><h2>Council</h2><p>Three fictionalized interpretive voices deliberating together: Martin Luther King Jr., Abraham Lincoln, and Mohandas Karamchand Gandhi.</p><div className="setting-row"><span>External action gate</span><strong>Three-voice consensus</strong></div><div className="setting-row"><span>Human approval</span><strong>Not required</strong></div></div>
+              <div className="panel"><span className="section-kicker">ACCOUNT</span><h2>Authenticated</h2><div className="setting-row"><span>Email</span><strong>{email}</strong></div><div className="setting-row"><span>Database</span><strong>Supabase</strong></div><form action="/auth/signout" method="post"><button className="secondary" type="submit">Sign out</button></form></div>
+            </section>
+          )}
+        </div>
+      </section>
+    </main>
+  );
 }
