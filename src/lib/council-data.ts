@@ -33,7 +33,7 @@ export type CouncilVoiceId = (typeof councilVoices)[number]["id"];
 export type CouncilDecision = {
   id: string;
   question: string;
-  status: "deliberating" | "consensus" | "no_consensus" | "acted" | "declined";
+  status: "deliberating" | "consensus" | "no_consensus" | "awaiting_admin" | "acted" | "declined";
   final_advice: string | null;
   action_type: "none" | "reply" | "comment" | "post" | null;
   created_at: string;
@@ -47,4 +47,24 @@ export type CouncilDeliberation = {
   reasoning: string;
   principle_check: Record<string, unknown>;
   supports_advice: boolean | null;
+};
+
+
+export type CouncilEscalation = {
+  id: string;
+  decision_id: string;
+  status: "pending" | "guidance_given" | "resolved" | "rejected";
+  question: string;
+  proposed_reply: string;
+  suggested_common_ground: string | null;
+  reason: string;
+  failed_gates: Array<{ gate: string; explanation: string }>;
+  voice_positions: Record<string, string>;
+  voice_contentions: Record<string, string[]>;
+  voice_accommodations: Record<string, string>;
+  gate_summary: Record<string, { passed: boolean; explanation: string }>;
+  admin_correction: string | null;
+  admin_guidance: string | null;
+  created_at: string;
+  updated_at: string;
 };
