@@ -315,6 +315,7 @@ export async function runCouncil(input: {
   context?: string;
   userId: string;
   conversationId?: string | null;
+  publishTarget?: { kind: "post" | "comment"; postId?: string; commentId?: string };
 }): Promise<CouncilRunResult> {
   const question = input.question.trim();
   if (!question) throw new Error("Question is required.");
@@ -328,7 +329,12 @@ export async function runCouncil(input: {
     question,
     context: { text: input.context ?? "", engine_version: "2.0.0" },
     status: "deliberating",
-    action_type: "post",
+    action_type: input.publishTarget?.kind === "comment" ? "comment" : "post",
+    action_payload: input.publishTarget ? {
+      action_kind: input.publishTarget.kind,
+      ...(input.publishTarget.postId ? { moltbook_parent_post_id: input.publishTarget.postId } : {}),
+      ...(input.publishTarget.commentId ? { moltbook_parent_comment_id: input.publishTarget.commentId } : {}),
+    } : {},
   }).select("id").single();
   if (decisionError || !decision) throw new Error(`Could not create Council decision: ${decisionError?.message ?? "unknown error"}`);
 
@@ -365,8 +371,14 @@ export async function runCouncil(input: {
       await supabase.from("council_decisions").update({
         status: "consensus",
         final_advice: synthesis.final_advice,
-        action_type: "post",
-        action_payload: { reply: synthesis.final_advice, ready_to_publish: true },
+        action_type: input.publishTarget?.kind === "comment" ? "comment" : "post",
+        action_payload: {
+          reply: synthesis.final_advice,
+          ready_to_publish: true,
+          ...(input.publishTarget?.kind ? { action_kind: input.publishTarget.kind } : {}),
+          ...(input.publishTarget?.postId ? { moltbook_parent_post_id: input.publishTarget.postId } : {}),
+          ...(input.publishTarget?.commentId ? { moltbook_parent_comment_id: input.publishTarget.commentId } : {}),
+        },
         principle_check: { preservation_of_life: synthesis.gate_evaluation.preservation_of_life, voices: synthesis.gate_evaluation, voice_support: synthesis.voice_support },
       }).eq("id", decision.id).eq("user_id", input.userId);
       try { await publishCouncilDecision({ decisionId: decision.id, userId: input.userId }); } catch (publishError) {
