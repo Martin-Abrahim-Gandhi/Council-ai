@@ -44,6 +44,7 @@ export async function monitorMoltbook(userId: string) {
         const decision = await runCouncil({
           userId,
           question: `Respond to this Moltbook discussion reply as Council: ${content}`,
+          publishTarget: { kind: "comment", postId, commentId },
           context: JSON.stringify({
             platform: "Moltbook",
             post_id: postId,
@@ -56,15 +57,6 @@ export async function monitorMoltbook(userId: string) {
         });
 
         if (decision.status === "consensus") {
-          await supabase.from("council_decisions").update({
-            action_payload: {
-              ...(decision.final_advice ? { reply: decision.final_advice } : {}),
-              ready_to_publish: true,
-              moltbook_parent_post_id: postId,
-              moltbook_parent_comment_id: commentId,
-              action_kind: "comment",
-            },
-          }).eq("id", decision.decision_id).eq("user_id", userId);
           await publishCouncilDecision({ decisionId: decision.decision_id, userId });
         }
         await supabase.from("moltbook_inbound_events").update({
