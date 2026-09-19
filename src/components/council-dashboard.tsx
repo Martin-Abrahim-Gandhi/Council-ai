@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { councilVoices, type CouncilDecision } from "@/lib/council-data";
+import { councilVoices, type CouncilDecision, type CouncilEscalation } from "@/lib/council-data";
 
 type DashboardData = {
   conversations: Array<{ id: string; title: string | null; platform: string; status: string; updated_at: string }>;
   decisions: CouncilDecision[];
   activity: Array<{ id: string; event_type: string; title: string; detail: string | null; created_at: string }>;
+  escalations: CouncilEscalation[];
 };
 
 function formatTime(value: string) {
@@ -20,6 +21,10 @@ export default function CouncilDashboard({ email, data }: { email: string; data:
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<{ status: string; final_advice: string | null; supreme_gate: { passed: boolean; explanation: string }; authority_checks: Record<string, boolean> } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selectedEscalation, setSelectedEscalation] = useState<CouncilEscalation | null>(data.escalations[0] ?? null);
+  const [correction, setCorrection] = useState("");
+  const [guidance, setGuidance] = useState("");
+  const [resolving, setResolving] = useState(false);
   const latest = data.decisions[0];
 
   async function deliberate() {
@@ -42,6 +47,29 @@ export default function CouncilDashboard({ email, data }: { email: string; data:
       setRunning(false);
     }
   }
+  async function resolveSelectedEscalation() {
+    if (!selectedEscalation || !correction.trim() || resolving) return;
+    setResolving(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/council/escalations/resolve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ escalationId: selectedEscalation.id, correction, guidance }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Could not resolve escalation.");
+      setSelectedEscalation({ ...selectedEscalation, status: "resolved", admin_correction: correction, admin_guidance: guidance });
+      setCorrection("");
+      setGuidance("");
+      setActive("Dashboard");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not resolve escalation.");
+    } finally {
+      setResolving(false);
+    }
+  }
+
   const consensusCount = data.decisions.filter((d) => d.status === "consensus" || d.status === "acted").length;
 
   return (
@@ -53,7 +81,7 @@ export default function CouncilDashboard({ email, data }: { email: string; data:
         </div>
 
         <nav className="nav">
-          {["Dashboard", "Conversations", "Feed", "Knowledge", "Create Post", "Settings"].map((item) => (
+          {["Dashboard", "Conversations", "Feed", "Knowledge", "Create Post", "Admin Escalations", "Settings"].map((item) => (
             <button key={item} className={active === item ? "nav-item active" : "nav-item"} onClick={() => setActive(item)}>
               {item}
             </button>
@@ -196,6 +224,61 @@ export default function CouncilDashboard({ email, data }: { email: string; data:
               )}
             </section>
           )}
+          {active === "Admin Escalations" && (
+            <section className="workspace">
+              <div className="list-panel">
+                <div className="panel-heading"><div><span className="section-kicker">ADMIN REVIEW</span><h3>Escalations</h3></div><span className="muted">{data.escalations.filter((e) => e.status === "pending").length} pending</span></div>
+                {data.escalations.length === 0 ? <div className="empty-state-inline">No constitutional escalations. Council has not stopped a reply at a gate.</div> : data.escalations.map((item) => (
+                  <button key={item.id} className="list-item" onClick={() => { setSelectedEscalation(item); setCorrection(item.suggested_common_ground ?? item.proposed_reply); }}>
+                    <span>{item.status}</span><strong>{item.question}</strong><small>{item.failed_gates.map((g) => g.gate).join(" · ") || "Review required"} · {formatTime(item.created_at)}</small>
+                  </button>
+                ))}
+              </div>
+              {selectedEscalation ? (
+                <div className="thread panel">
+                  <span className="section-kicker">WHY COUNCIL STOPPED</span>
+                  <h2>Constitutional gate review</h2>
+                  <p className="thread-intro">{selectedEscalation.reason}</p>
+                  <div className="panel">
+                    <span className="section-kicker">QUESTION</span>
+                    <p>{selectedEscalation.question}</p>
+                  </div>
+                  <div className="panel">
+                    <span className="section-kicker">PROPOSED REPLY</span>
+                    <blockquote>{selectedEscalation.proposed_reply}</blockquote>
+                  </div>
+                  <div className="panel">
+                    <span className="section-kicker">SUGGESTED COMMON GROUND</span>
+                    <blockquote>{selectedEscalation.suggested_common_ground ?? "No safer formulation was returned."}</blockquote>
+                  </div>
+                  <div className="panel">
+                    <span className="section-kicker">FAILED GATES</span>
+                    {selectedEscalation.failed_gates.length === 0 ? <p>The candidate did not pass the final constitutional review.</p> : selectedEscalation.failed_gates.map((gate) => (
+                      <div className="voice-turn" key={gate.gate}><b>{gate.gate}</b><p>{gate.explanation}</p></div>
+                    ))}
+                  </div>
+                  <div className="panel">
+                    <span className="section-kicker">VOICE CONTENTIONS</span>
+                    {councilVoices.map((voice) => (
+                      <div className="voice-turn" key={voice.id}><b>{voice.name}</b><p>{selectedEscalation.voice_positions[voice.id] ?? "No position recorded."}</p><p>{(selectedEscalation.voice_contentions[voice.id] ?? []).join(" ")}</p><small>{selectedEscalation.voice_accommodations[voice.id] ?? ""}</small></div>
+                    ))}
+                  </div>
+                  {selectedEscalation.status !== "resolved" && (
+                    <div className="panel composer">
+                      <span className="section-kicker">ADMIN CORRECTION</span>
+                      <h3>Correct the response</h3>
+                      <label>Corrected response<textarea value={correction} onChange={(event) => setCorrection(event.target.value)} rows={8} /></label>
+                      <label>Guidance for Council<textarea value={guidance} onChange={(event) => setGuidance(event.target.value)} rows={4} placeholder="Optional context for the next deliberation..." /></label>
+                      <button className="primary" disabled={resolving || !correction.trim()} onClick={resolveSelectedEscalation}>{resolving ? "Rechecking constitutional gates…" : "Approve corrected response & continue"}</button>
+                      <div className="approval-note">The corrected response is rechecked against the Supreme gate and all three voice authorities. Admin guidance cannot override a gate.</div>
+                    </div>
+                  )}
+                  {selectedEscalation.status === "resolved" && <div className="approval-note">Resolved. The corrected response passed the constitutional review and is marked ready to publish.</div>}
+                </div>
+              ) : <div className="empty-state panel"><h2>Select an escalation.</h2></div>}
+            </section>
+          )}
+
           {active === "Settings" && (
             <section className="settings-grid">
               <div className="panel"><span className="section-kicker">IDENTITY</span><h2>Council</h2><p>Three fictionalized interpretive voices deliberating together: Martin Luther King Jr., Abraham Lincoln, and Mohandas Karamchand Gandhi.</p><div className="setting-row"><span>External action gate</span><strong>Three-voice consensus</strong></div><div className="setting-row"><span>Human approval</span><strong>Not required</strong></div></div>
