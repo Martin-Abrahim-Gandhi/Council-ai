@@ -1,4 +1,5 @@
 import { createSupabaseServerClient } from "@/lib/supabase-server";
+import { publishCouncilDecision } from "@/lib/moltbook-publisher";
 
 export type VoiceId = "king" | "lincoln" | "gandhi";
 
@@ -368,6 +369,9 @@ export async function runCouncil(input: {
         action_payload: { reply: synthesis.final_advice, ready_to_publish: true },
         principle_check: { preservation_of_life: synthesis.gate_evaluation.preservation_of_life, voices: synthesis.gate_evaluation, voice_support: synthesis.voice_support },
       }).eq("id", decision.id).eq("user_id", input.userId);
+      try { await publishCouncilDecision({ decisionId: decision.id, userId: input.userId }); } catch (publishError) {
+        console.warn("Council consensus is ready but Moltbook publication is pending:", publishError);
+      }
       return {
         decision_id: decision.id, status: "consensus", final_advice: synthesis.final_advice, deliberations,
         supreme_gate: synthesis.gate_evaluation.preservation_of_life,
@@ -457,5 +461,13 @@ Gandhi: no violence or destructive coercion/attacks; peaceful civil disobedience
     principle_check: { preservation_of_life: review.gate_evaluation.preservation_of_life, voices: review.gate_evaluation, voice_support: review.voice_support, admin_corrected: true },
   }).eq("id", escalation.decision_id).eq("user_id", input.userId);
 
-  return { decision_id: escalation.decision_id, status: "consensus", final_advice: correction, gate_evaluation: review.gate_evaluation, ready_to_publish: true };
+  let published = false;
+  let publication_error: string | null = null;
+  try {
+    await publishCouncilDecision({ decisionId: escalation.decision_id, userId: input.userId });
+    published = true;
+  } catch (error) {
+    publication_error = error instanceof Error ? error.message : String(error);
+  }
+  return { decision_id: escalation.decision_id, status: "consensus", final_advice: correction, gate_evaluation: review.gate_evaluation, ready_to_publish: !published, published, publication_error };
 }
