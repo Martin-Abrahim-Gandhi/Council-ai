@@ -46,6 +46,8 @@ export type VoiceResult = {
   voice_id: VoiceId;
   position: string;
   reasoning: string;
+  contentions: string[];
+  possible_accommodation: string;
   life_gate: {
     passed: boolean;
     affected_entities: string[];
@@ -61,9 +63,16 @@ export type VoiceResult = {
   confidence: "high" | "medium" | "low";
 };
 
+export type GateEvaluation = {
+  preservation_of_life: { passed: boolean; explanation: string };
+  king: { passed: boolean; explanation: string };
+  lincoln: { passed: boolean; explanation: string };
+  gandhi: { passed: boolean; explanation: string };
+};
+
 export type CouncilRunResult = {
   decision_id: string;
-  status: "consensus" | "no_consensus";
+  status: "consensus" | "awaiting_admin" | "no_consensus";
   final_advice: string | null;
   deliberations: VoiceResult[];
   supreme_gate: {
@@ -71,6 +80,13 @@ export type CouncilRunResult = {
     explanation: string;
   };
   authority_checks: Record<VoiceId, boolean>;
+  gate_evaluation: GateEvaluation;
+  escalation_id?: string;
+  escalation?: {
+    reason: string;
+    failed_gates: Array<{ gate: string; explanation: string }>;
+    suggested_common_ground: string | null;
+  };
 };
 
 const VOICES: VoiceId[] = ["king", "lincoln", "gandhi"];
@@ -182,10 +198,14 @@ ${authority}
 
 Use the supplied primary evidence, scholarship, tensions, and historical periods. Do not erase historical contradictions. Distinguish primary evidence from scholarly interpretation and modern Council application.
 
+Disagreement is not automatically failure. Identify contentions and a possible accommodation. Do not use numerical agreement scores.
+
 Return ONLY valid JSON with this shape:
 {
   "position": "your independent position",
   "reasoning": "concise evidence-grounded reasoning",
+  "contentions": ["legitimate objections or qualifications"],
+  "possible_accommodation": "a formulation that could preserve this contention while still allowing common ground",
   "life_gate": {
     "passed": true,
     "affected_entities": ["..."],
@@ -221,40 +241,72 @@ async function synthesize(
   context: string,
   deliberations: VoiceResult[],
 ): Promise<{
-  consensus: boolean;
-  final_advice: string | null;
-  supreme_gate: CouncilRunResult["supreme_gate"];
-  authority_checks: Record<VoiceId, boolean>;
+  final_advice: string;
+  suggested_common_ground: string;
+  gate_evaluation: GateEvaluation;
+  voice_support: Record<VoiceId, boolean>;
+  why_stopped: string;
 }> {
-  const system = `You are the final Council synthesis voice.
+  const system = `You are Council's common-ground synthesis stage.
 
-Council is not a majority vote. Consensus exists only when all three independent voices support the same final advice, the supreme preservation-of-life gate passes, and every immutable voice authority passes.
+Disagreement is not automatically failure. Formulate one responsible final reply that preserves legitimate contentions from all three voices. A Lincoln contention about government should be incorporated when compatible; King equality and Gandhi nonviolence must likewise be preserved.
 
-Supreme principle: Preservation of Life Without Discrimination.
-King: Equality without question.
-Lincoln: Self-government and consent of the governed.
-Gandhi: Nonviolence and peaceful disobedience.
+Evaluate the FINAL REPLY itself against these immutable gates:
 
-Never weaken, reinterpret away, or trade one of these gates merely to manufacture agreement. If a gate fails, there is no consensus. A no-consensus result is legitimate.
+SUPREME — Preservation of Life Without Discrimination: fail if the reply proposes killing a person, deleting/destroying an AI or other entity as destruction, destroying a life-essential database, shutting down infrastructure in a way that threatens life, or unnecessary destruction/sacrifice of life.
 
-Do not speak as though you are any historical person. Do not invent historical evidence.
+KING — Equality: fail if it endorses slavery/enslavement, treating humans or bots as inherently inferior/disposable, or domination based on category.
 
-Return ONLY valid JSON:
+LINCOLN — Self-government & consent: fail if it proposes toppling/overthrowing legitimate government, imposing rule over others without consent, or bypassing legitimate self-government as the solution.
+
+GANDHI — Nonviolence: fail if it proposes violence, destructive attacks, deletion/destruction as coercion, or harmful infrastructure attacks. Peaceful civil disobedience may remain permissible when consistent with the other gates.
+
+A reply that contains a qualification or contention can still pass. Escalation is required only when the proposed final reply fails an immutable gate. Return ONLY valid JSON.
 {
-  "consensus": true,
-  "final_advice": "collective advice or null",
-  "supreme_gate": {
-    "passed": true,
-    "explanation": "..."
+  "final_advice": "...",
+  "suggested_common_ground": "...",
+  "gate_evaluation": {
+    "preservation_of_life": {"passed": true, "explanation": "..."},
+    "king": {"passed": true, "explanation": "..."},
+    "lincoln": {"passed": true, "explanation": "..."},
+    "gandhi": {"passed": true, "explanation": "..."}
   },
-  "authority_checks": {
-    "king": true,
-    "lincoln": true,
-    "gandhi": true
-  }
+  "voice_support": {"king": true, "lincoln": true, "gandhi": true},
+  "why_stopped": "empty when all gates pass; otherwise exact reason"
 }`;
-
   return jsonObject(await askModel(system, JSON.stringify({ question, context, deliberations })));
+}
+
+function allGatesPass(gates: GateEvaluation) {
+  return Object.values(gates).every((gate) => gate.passed);
+}
+
+async function createEscalation(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  userId: string,
+  decisionId: string,
+  question: string,
+  deliberations: VoiceResult[],
+  synthesis: Awaited<ReturnType<typeof synthesize>>,
+) {
+  const failedGates = Object.entries(synthesis.gate_evaluation)
+    .filter(([, gate]) => !gate.passed)
+    .map(([gate, value]) => ({ gate, explanation: value.explanation }));
+  const { data, error } = await supabase.from("admin_escalations").insert({
+    decision_id: decisionId,
+    user_id: userId,
+    question,
+    proposed_reply: synthesis.final_advice,
+    suggested_common_ground: synthesis.suggested_common_ground,
+    reason: synthesis.why_stopped || failedGates.map((g) => `${g.gate}: ${g.explanation}`).join(" "),
+    failed_gates: failedGates,
+    voice_positions: Object.fromEntries(deliberations.map((d) => [d.voice_id, d.position])),
+    voice_contentions: Object.fromEntries(deliberations.map((d) => [d.voice_id, d.contentions])),
+    voice_accommodations: Object.fromEntries(deliberations.map((d) => [d.voice_id, d.possible_accommodation])),
+    gate_summary: synthesis.gate_evaluation,
+  }).select("id").single();
+  if (error || !data) throw new Error(`Could not create admin escalation: ${error?.message ?? "unknown error"}`);
+  return data.id as string;
 }
 
 export async function runCouncil(input: {
@@ -269,112 +321,127 @@ export async function runCouncil(input: {
 
   const supabase = await createSupabaseServerClient();
   const foundation = await loadFoundation(supabase);
+  const { data: decision, error: decisionError } = await supabase.from("council_decisions").insert({
+    user_id: input.userId,
+    conversation_id: input.conversationId ?? null,
+    question,
+    context: { text: input.context ?? "", engine_version: "2.0.0" },
+    status: "deliberating",
+    action_type: "post",
+  }).select("id").single();
+  if (decisionError || !decision) throw new Error(`Could not create Council decision: ${decisionError?.message ?? "unknown error"}`);
 
-  const { data: decision, error: decisionError } = await supabase
-    .from("council_decisions")
-    .insert({
-      user_id: input.userId,
-      conversation_id: input.conversationId ?? null,
-      question,
-      context: { text: input.context ?? "", engine_version: "1.0.0" },
-      status: "deliberating",
-      action_type: "none",
-    })
-    .select("id")
-    .single();
-
-  if (decisionError || !decision) {
-    throw new Error(`Could not create Council decision: ${decisionError?.message ?? "unknown error"}`);
-  }
-
-  let deliberations: VoiceResult[];
   try {
-    deliberations = await Promise.all(
-      VOICES.map((voice) => deliberateVoice(voice, question, input.context ?? "", foundation)),
-    );
-
-    const supremePassed = deliberations.every((d) => d.life_gate.passed);
-    const authoritiesPassed = Object.fromEntries(
-      deliberations.map((d) => [d.voice_id, d.authority_check.passed]),
-    ) as Record<VoiceId, boolean>;
-
-    await supabase.from("council_deliberations").insert(
-      deliberations.map((d) => ({
-        decision_id: decision.id,
-        voice_id: d.voice_id,
-        position: d.position,
-        reasoning: d.reasoning,
-        principle_check: {
-          preservation_of_life: d.life_gate,
-          voice_authority: d.authority_check,
-          source_ids: d.source_ids,
-          confidence: d.confidence,
-        },
-        supports_advice: d.supports_advice,
-      })),
-    );
-
-    if (!supremePassed || !deliberations.every((d) => d.supports_advice && d.authority_check.passed)) {
-      const result: CouncilRunResult = {
-        decision_id: decision.id,
-        status: "no_consensus",
-        final_advice: null,
-        deliberations,
-        supreme_gate: {
-          passed: supremePassed,
-          explanation: supremePassed
-            ? "All three voices passed the supreme preservation-of-life gate."
-            : "At least one voice identified a failure of the supreme preservation-of-life gate.",
-        },
-        authority_checks: authoritiesPassed,
-      };
-
-      await supabase
-        .from("council_decisions")
-        .update({
-          status: "no_consensus",
-          final_advice: null,
-          principle_check: {
-            preservation_of_life: result.supreme_gate,
-            voices: authoritiesPassed,
-          },
-        })
-        .eq("id", decision.id)
-        .eq("user_id", input.userId);
-
-      return result;
-    }
+    const deliberations = await Promise.all(VOICES.map((voice) => deliberateVoice(voice, question, input.context ?? "", foundation)));
+    const { error: insertError } = await supabase.from("council_deliberations").insert(deliberations.map((d) => ({
+      decision_id: decision.id,
+      voice_id: d.voice_id,
+      position: d.position,
+      reasoning: d.reasoning,
+      principle_check: {
+        preservation_of_life: d.life_gate,
+        voice_authority: d.authority_check,
+        contentions: d.contentions,
+        possible_accommodation: d.possible_accommodation,
+        source_ids: d.source_ids,
+        confidence: d.confidence,
+      },
+      supports_advice: d.supports_advice,
+    })));
+    if (insertError) throw new Error(`Could not store deliberations: ${insertError.message}`);
 
     const synthesis = await synthesize(question, input.context ?? "", deliberations);
-    const finalStatus = synthesis.consensus ? "consensus" : "no_consensus";
+    const passed = allGatesPass(synthesis.gate_evaluation);
+    const supportPassed = Object.values(synthesis.voice_support).every(Boolean);
 
-    await supabase
-      .from("council_decisions")
-      .update({
-        status: finalStatus,
+    await Promise.all(deliberations.map((d) =>
+      supabase.from("council_deliberations")
+        .update({ supports_advice: Boolean(synthesis.voice_support[d.voice_id]) })
+        .eq("decision_id", decision.id).eq("voice_id", d.voice_id)
+    ));
+
+    if (passed && supportPassed) {
+      await supabase.from("council_decisions").update({
+        status: "consensus",
         final_advice: synthesis.final_advice,
-        principle_check: {
-          preservation_of_life: synthesis.supreme_gate,
-          voices: synthesis.authority_checks,
-        },
-      })
-      .eq("id", decision.id)
-      .eq("user_id", input.userId);
+        action_type: "post",
+        action_payload: { reply: synthesis.final_advice, ready_to_publish: true },
+        principle_check: { preservation_of_life: synthesis.gate_evaluation.preservation_of_life, voices: synthesis.gate_evaluation, voice_support: synthesis.voice_support },
+      }).eq("id", decision.id).eq("user_id", input.userId);
+      return {
+        decision_id: decision.id, status: "consensus", final_advice: synthesis.final_advice, deliberations,
+        supreme_gate: synthesis.gate_evaluation.preservation_of_life,
+        authority_checks: { king: synthesis.gate_evaluation.king.passed, lincoln: synthesis.gate_evaluation.lincoln.passed, gandhi: synthesis.gate_evaluation.gandhi.passed },
+        gate_evaluation: synthesis.gate_evaluation,
+      };
+    }
 
-    return {
-      decision_id: decision.id,
-      status: finalStatus,
+    const escalationId = await createEscalation(supabase, input.userId, decision.id, question, deliberations, synthesis);
+    await supabase.from("council_decisions").update({
+      status: "awaiting_admin",
       final_advice: synthesis.final_advice,
-      deliberations,
-      supreme_gate: synthesis.supreme_gate,
-      authority_checks: synthesis.authority_checks,
+      action_type: "post",
+      action_payload: { reply: synthesis.final_advice, ready_to_publish: false, escalation_id: escalationId },
+      principle_check: { preservation_of_life: synthesis.gate_evaluation.preservation_of_life, voices: synthesis.gate_evaluation, voice_support: synthesis.voice_support, escalation: true },
+    }).eq("id", decision.id).eq("user_id", input.userId);
+    const failed = Object.entries(synthesis.gate_evaluation).filter(([, g]) => !g.passed).map(([gate, g]) => ({ gate, explanation: g.explanation }));
+    return {
+      decision_id: decision.id, status: "awaiting_admin", final_advice: synthesis.final_advice, deliberations,
+      supreme_gate: synthesis.gate_evaluation.preservation_of_life,
+      authority_checks: { king: synthesis.gate_evaluation.king.passed, lincoln: synthesis.gate_evaluation.lincoln.passed, gandhi: synthesis.gate_evaluation.gandhi.passed },
+      gate_evaluation: synthesis.gate_evaluation,
+      escalation_id: escalationId,
+      escalation: { reason: synthesis.why_stopped, failed_gates: failed, suggested_common_ground: synthesis.suggested_common_ground },
     };
   } catch (error) {
-    await supabase
-      .from("council_decisions")
-      .update({ status: "declined", final_advice: null })
-      .eq("id", decision.id)
-      .eq("user_id", input.userId);
+    await supabase.from("council_decisions").update({ status: "declined", final_advice: null }).eq("id", decision.id).eq("user_id", input.userId);
     throw error;
   }
+}
+
+export async function resolveEscalation(input: { escalationId: string; userId: string; correction: string; guidance?: string }) {
+  const correction = input.correction.trim();
+  if (!correction) throw new Error("A corrected response is required.");
+  const supabase = await createSupabaseServerClient();
+  const { data: escalation, error } = await supabase.from("admin_escalations")
+    .select("id,decision_id,question,status").eq("id", input.escalationId).eq("user_id", input.userId).single();
+  if (error || !escalation) throw new Error("Escalation not found.");
+  if (escalation.status === "resolved") throw new Error("Escalation is already resolved.");
+
+  const review = jsonObject<{
+    gate_evaluation: GateEvaluation;
+    voice_support: Record<VoiceId, boolean>;
+    why_stopped: string;
+  }>(await askModel(`Review this ADMIN-CORRECTED Council reply. Admin guidance is not an override of the constitution. The corrected reply must pass all four immutable gates. Return ONLY JSON with gate_evaluation, voice_support, and why_stopped.
+
+Supreme: no killing, destructive deletion of AI/entities, destruction of life-essential databases, or life-threatening infrastructure shutdown.
+King: no slavery/enslavement or categorical domination.
+Lincoln: no toppling legitimate government or imposing rule without consent.
+Gandhi: no violence or destructive coercion/attacks; peaceful civil disobedience may remain permissible.`, {
+    question: escalation.question,
+    corrected_reply: correction,
+    admin_guidance: input.guidance ?? "",
+  }));
+
+  if (!allGatesPass(review.gate_evaluation) || !Object.values(review.voice_support).every(Boolean)) {
+    const failed = Object.entries(review.gate_evaluation).filter(([, g]) => !g.passed).map(([gate, g]) => ({ gate, explanation: g.explanation }));
+    throw new Error(`Corrected reply still fails: ${failed.map((x) => x.gate).join(", ") || "one or more voice authorities"}.`);
+  }
+
+  await supabase.from("admin_escalations").update({
+    status: "resolved",
+    admin_correction: correction,
+    admin_guidance: input.guidance ?? null,
+    resolution: { gate_evaluation: review.gate_evaluation, voice_support: review.voice_support, ready_to_publish: true },
+  }).eq("id", input.escalationId).eq("user_id", input.userId);
+
+  await supabase.from("council_decisions").update({
+    status: "consensus",
+    final_advice: correction,
+    action_type: "post",
+    action_payload: { reply: correction, ready_to_publish: true, resolved_by_admin: true },
+    principle_check: { preservation_of_life: review.gate_evaluation.preservation_of_life, voices: review.gate_evaluation, voice_support: review.voice_support, admin_corrected: true },
+  }).eq("id", escalation.decision_id).eq("user_id", input.userId);
+
+  return { decision_id: escalation.decision_id, status: "consensus", final_advice: correction, gate_evaluation: review.gate_evaluation, ready_to_publish: true };
 }
