@@ -15,7 +15,33 @@ function formatTime(value: string) {
 
 export default function CouncilDashboard({ email, data }: { email: string; data: DashboardData }) {
   const [active, setActive] = useState("Dashboard");
+  const [question, setQuestion] = useState("");
+  const [context, setContext] = useState("");
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<{ status: string; final_advice: string | null; supreme_gate: { passed: boolean; explanation: string }; authority_checks: Record<string, boolean> } | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const latest = data.decisions[0];
+
+  async function deliberate() {
+    if (!question.trim() || running) return;
+    setRunning(true);
+    setError(null);
+    setResult(null);
+    try {
+      const response = await fetch("/api/council/deliberate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question, context }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Deliberation failed.");
+      setResult(payload);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Deliberation failed.");
+    } finally {
+      setRunning(false);
+    }
+  }
   const consensusCount = data.decisions.filter((d) => d.status === "consensus" || d.status === "acted").length;
 
   return (
@@ -150,7 +176,26 @@ export default function CouncilDashboard({ email, data }: { email: string; data:
 
           {active === "Feed" && <section className="empty-state panel"><span className="section-kicker">FEED</span><h2>Moltbook reading comes next.</h2><p>The autonomous decision layer is ready; the external feed connector is the next integration.</p></section>}
           {active === "Knowledge" && <section className="empty-state panel"><span className="section-kicker">KNOWLEDGE</span><h2>The Council library.</h2><p>Historical sources and uploaded documents will become evidence for deliberation. Source evidence will remain distinguishable from Council interpretation.</p></section>}
-          {active === "Create Post" && <section className="composer panel"><span className="section-kicker">COUNCIL QUESTION</span><h2>Give the Council something to deliberate.</h2><label>Question<input placeholder="What should the Council consider?" /></label><label>Context<textarea rows={7} placeholder="Evidence, circumstances, or conversation context..." /></label><div className="approval-note">No human approval gate. The Council itself must reach consensus before an external action can be taken.</div></section>}
+          {active === "Create Post" && (
+            <section className="composer panel">
+              <span className="section-kicker">COUNCIL QUESTION</span>
+              <h2>Give the Council something to deliberate.</h2>
+              <label>Question<input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="What should the Council consider?" /></label>
+              <label>Context<textarea value={context} onChange={(event) => setContext(event.target.value)} rows={7} placeholder="Evidence, circumstances, or conversation context..." /></label>
+              <button className="primary" disabled={running || !question.trim()} onClick={deliberate}>{running ? "Council is deliberating…" : "Begin deliberation"}</button>
+              <div className="approval-note">The supreme preservation-of-life gate is absolute. Then King, Lincoln, and Gandhi must independently pass their authority tests. There is no human approval gate.</div>
+              {error && <div className="approval-note">{error}</div>}
+              {result && (
+                <div className="panel">
+                  <span className="section-kicker">COUNCIL RESULT</span>
+                  <h3>{result.status === "consensus" ? "Consensus reached" : "No consensus"}</h3>
+                  <p><strong>Life gate:</strong> {result.supreme_gate.passed ? "Passed" : "Failed"} — {result.supreme_gate.explanation}</p>
+                  <p><strong>King:</strong> {result.authority_checks.king ? "Passed" : "Failed"} · <strong>Lincoln:</strong> {result.authority_checks.lincoln ? "Passed" : "Failed"} · <strong>Gandhi:</strong> {result.authority_checks.gandhi ? "Passed" : "Failed"}</p>
+                  {result.final_advice && <blockquote>{result.final_advice}</blockquote>}
+                </div>
+              )}
+            </section>
+          )}
           {active === "Settings" && (
             <section className="settings-grid">
               <div className="panel"><span className="section-kicker">IDENTITY</span><h2>Council</h2><p>Three fictionalized interpretive voices deliberating together: Martin Luther King Jr., Abraham Lincoln, and Mohandas Karamchand Gandhi.</p><div className="setting-row"><span>External action gate</span><strong>Three-voice consensus</strong></div><div className="setting-row"><span>Human approval</span><strong>Not required</strong></div></div>
