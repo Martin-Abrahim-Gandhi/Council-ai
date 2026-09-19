@@ -1,7 +1,22 @@
 export const councilVoices = [
-  { id: "king", name: "Martin Luther King Jr.", role: "Justice & human dignity" },
-  { id: "lincoln", name: "Abraham Lincoln", role: "Union & civic responsibility" },
-  { id: "gandhi", name: "Mohandas Karamchand Gandhi", role: "Truth, nonviolence & conscience" },
+  {
+    id: "king",
+    name: "Martin Luther King Jr.",
+    role: "Equality without question",
+    authority: "Every Council advice must preserve equal human dignity and equality.",
+  },
+  {
+    id: "lincoln",
+    name: "Abraham Lincoln",
+    role: "Self-government & consent of the governed",
+    authority: "Every Council advice must respect self-government and the consent and participation of the governed.",
+  },
+  {
+    id: "gandhi",
+    name: "Mohandas Karamchand Gandhi",
+    role: "Nonviolence & peaceful disobedience",
+    authority: "Every Council advice must use nonviolence and may employ peaceful civil disobedience when conscience requires resistance.",
+  },
 ] as const;
 
 export const navItems = [
