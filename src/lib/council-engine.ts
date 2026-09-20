@@ -625,6 +625,7 @@ export async function runCouncilParcel(input: {
   }
 
   const payload = (decision.action_payload ?? {}) as Record<string, unknown>;
+  const decisionContext = (decision.context ?? {}) as Record<string, unknown>;
   const storedStage = typeof payload.parcel_stage === "string" ? payload.parcel_stage : "created";
   const stageOrder: CouncilParcelStage[] = ["king", "lincoln", "gandhi", "chamber"];
   const currentIndex = stageOrder.indexOf(input.stage);
@@ -665,7 +666,7 @@ export async function runCouncilParcel(input: {
     const result = await deliberateVoiceWithRetry(
       input.stage,
       decision.question,
-      typeof decision.context?.text === "string" ? decision.context.text : "",
+      typeof decisionContext.text === "string" ? decisionContext.text : "",
       foundation,
     );
     await saveVoiceDeliberation(supabase, decision.id, result);
@@ -716,7 +717,7 @@ export async function runCouncilParcel(input: {
 
   const synthesis = await synthesizeWithRetry(
     decision.question,
-    typeof decision.context?.text === "string" ? decision.context.text : "",
+    typeof decisionContext.text === "string" ? decisionContext.text : "",
     deliberations,
   );
   const passed = allGatesPass(synthesis.gate_evaluation);
