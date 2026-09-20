@@ -123,6 +123,7 @@ async function askModel(system: string, user: string): Promise<string> {
     body: JSON.stringify({
       model: MODEL,
       temperature: 0.2,
+      max_tokens: 900,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: system },
@@ -130,7 +131,7 @@ async function askModel(system: string, user: string): Promise<string> {
       ],
     }),
     cache: "no-store",
-    signal: AbortSignal.timeout(25_000),
+    signal: AbortSignal.timeout(15_000),
   });
 
   if (!response.ok) {
