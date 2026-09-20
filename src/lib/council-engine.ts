@@ -239,24 +239,45 @@ async function deliberateVoice(
   if (!data.profile) throw new Error(`Missing persona profile for ${voice}`);
 
   const authority = data.profile.authority_rule ?? "";
-  const kingSourceTitles = [
-    "A Letter from Birmingham Jail",
-    "Beyond Vietnam: A Time to Break Silence",
-    "Give Us the Ballot",
-    "I Have a Dream",
-    "My Pilgrimage to Nonviolence",
-  ];
-  const focusedSources = voice === "king"
-    ? data.sources.filter((source) => kingSourceTitles.includes(source.title)).slice(0, 5)
-    : data.sources;
+  const sourceTitlesByVoice: Record<VoiceId, string[]> = {
+    king: [
+      "A Letter from Birmingham Jail",
+      "Beyond Vietnam: A Time to Break Silence",
+      "Give Us the Ballot",
+      "I Have a Dream",
+      "My Pilgrimage to Nonviolence",
+    ],
+    lincoln: [
+      "First Inaugural Address",
+      "Gettysburg Address",
+      "Second Inaugural Address",
+      "Emancipation Proclamation",
+      "Letter to Albert G. Hodges, April 4, 1864",
+    ],
+    gandhi: [
+      "Hind Swaraj (Indian Home Rule)",
+      "Satyagraha in South Africa",
+      "Constructive Programme: Its Meaning and Place",
+      "The Story of My Experiments with Truth, Vol. I",
+      "The Story of My Experiments with Truth, Vol. II",
+    ],
+  };
+
+  const focusedTitles = sourceTitlesByVoice[voice];
+  const focusedSources = data.sources
+    .filter((source) => focusedTitles.includes(source.title))
+    .slice(0, 5);
   const focusedSourceIds = focusedSources.map((source) => source.id);
-  const focusedClaims = voice === "king" ? data.claims.slice(0, 6) : data.claims;
-  const focusedDebates = voice === "king" ? data.debates.slice(0, 4) : data.debates;
+  const focusedClaims = data.claims.slice(0, 6);
+  const focusedDebates = data.debates.slice(0, 4);
 
   const system = `You occupy the ${VOICE_NAMES[voice]} SEAT inside Council.
 
 PURPOSE
-Study ONLY the supplied historical evidence for this seat. For the King seat, the evidence is deliberately constrained to five authoritative primary sources from the Martin Luther King, Jr. Papers/Stanford King Institute collection. Do not browse, search the web, seek additional sources, or invent missing material. Read the five named source records and the small set of researched claims/debates supplied with them, then reason from that bounded corpus. Deliberate as a historically grounded King interpretive seat; do not claim authentic private thoughts or communication.
+Study ONLY the supplied historical evidence for this seat. This seat is deliberately constrained to five authoritative primary-source records already researched and stored by the Council. Do not browse, search the web, seek additional sources, or invent missing material. Read only the five named source records plus the small set of researched claims/debates supplied with them, then reason from that bounded corpus. Deliberate as a historically grounded interpretive seat; do not claim authentic private thoughts or communication.
+
+SOURCE BOUNDARY
+You have exactly five named sources for this seat. Treat them as the complete source set for this parcel. Do not attempt to discover, retrieve, or reconstruct other writings.
 
 ${COUNCIL_CONSTITUTION}
 
@@ -312,13 +333,11 @@ Return ONLY valid JSON:
       claims: focusedClaims,
       scholarship_debates: focusedDebates,
       sources: focusedSources,
-      source_scope: voice === "king"
-        ? {
-            rule: "Use only these five sources. Do not browse for more.",
-            source_ids: focusedSourceIds,
-            titles: focusedSources.map((source) => source.title),
-          }
-        : undefined,
+      source_scope: {
+        rule: "Use only these five sources. Do not browse for more.",
+        source_ids: focusedSourceIds,
+        titles: focusedSources.map((source) => source.title),
+      },
     },
   });
 
@@ -342,7 +361,16 @@ async function synthesize(
 You are NOT Martin Luther King Jr., Abraham Lincoln, or Gandhi. You are the chamber in which their three already-completed deliberations are placed around one table.
 
 PURPOSE
-Imagine the three Council seats seated together at a table. Examine their evidence, interpretations, applications, positions, contentions, and accommodations. Produce a final answer that can legitimately emerge from that deliberation.
+The three seat parcels are ALREADY COMPLETE. Their answers are preloaded on the table below. Do not perform the three historical studies again and do not search for any additional evidence. Act only as the Council Chamber: read the three completed answers, compare them directly, identify agreement and disagreement, and negotiate a final declaration that is traceable to those answers.
+
+TABLE PROTOCOL
+- KING ANSWER is already on the table.
+- LINCOLN ANSWER is already on the table.
+- GANDHI ANSWER is already on the table.
+- Treat each completed answer as a fixed deliberative record. Do not regenerate it.
+- Do not browse, retrieve sources, or reopen the historical research.
+- Discuss the three answers with each other, not the underlying historical corpus.
+- The final declaration must emerge from the three answers and the immutable Constitution.
 
 ${COUNCIL_CONSTITUTION}
 
@@ -389,7 +417,8 @@ Return ONLY valid JSON:
   "why_stopped": "empty when all gates pass and all three support the answer; otherwise exact reason for no consensus or escalation"
 }
 
-Keep every field concise. Keep the complete JSON response comfortably below 700 tokens.`;
+Keep every field concise. Keep the complete JSON response comfortably below 700 tokens.
+The input already contains the three completed answers. Do not restate them in full; synthesize only the final declaration, common ground, gate evaluation, and support status.`;
   return jsonObject(await askModel(system, JSON.stringify({ question, context, deliberations })));
 }
 
