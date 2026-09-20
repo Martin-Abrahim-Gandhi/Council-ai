@@ -98,7 +98,9 @@ const VOICE_NAMES: Record<VoiceId, string> = {
   gandhi: "Mohandas Karamchand Gandhi",
 };
 
-const MODEL = process.env.COUNCIL_MODEL ?? "openai/gpt-6-astra";
+// NVIDIA-hosted NIM API Catalog endpoint. Keep this key server-side.
+const MODEL = process.env.COUNCIL_MODEL ?? "z-ai/glm-5-3";
+const NVIDIA_CHAT_COMPLETIONS_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
 
 function jsonObject<T>(value: string): T {
   const cleaned = value.trim().replace(/^\`\`\`json\s*/i, "").replace(/\s*\`\`\`$/i, "");
@@ -106,10 +108,10 @@ function jsonObject<T>(value: string): T {
 }
 
 async function askModel(system: string, user: string): Promise<string> {
-  const key = process.env.AI_GATEWAY_API_KEY;
-  if (!key) throw new Error("AI_GATEWAY_API_KEY is not configured.");
+  const key = process.env.NVIDIA_API_KEY;
+  if (!key) throw new Error("NVIDIA_API_KEY is not configured.");
 
-  const response = await fetch("https://ai-gateway.vercel.sh/v1/chat/completions", {
+  const response = await fetch(NVIDIA_CHAT_COMPLETIONS_URL, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${key}`,
@@ -128,13 +130,13 @@ async function askModel(system: string, user: string): Promise<string> {
 
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`AI Gateway request failed (${response.status}): ${body.slice(0, 500)}`);
+    throw new Error(`NVIDIA NIM request failed (${response.status}): ${body.slice(0, 500)}`);
   }
 
   const data = await response.json();
   const text = data?.choices?.[0]?.message?.content;
   if (typeof text !== "string" || !text.trim()) {
-    throw new Error("AI Gateway returned no message content.");
+    throw new Error("NVIDIA NIM returned no message content.");
   }
   return text;
 }
