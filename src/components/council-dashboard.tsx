@@ -60,10 +60,24 @@ export default function CouncilDashboard({ email, data }: { email: string; data:
     }
 
     async function waitForParcel(stage: "king" | "lincoln" | "gandhi" | "chamber", decisionId: string) {
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        const response = await fetch(`/api/council/parcel?decisionId=${encodeURIComponent(decisionId)}`, {
-          cache: "no-store",
-        });
+      let transientFetchFailures = 0;
+      for (let attempt = 0; attempt < 140; attempt += 1) {
+        let response: Response;
+        try {
+          response = await fetch(`/api/council/parcel?decisionId=${encodeURIComponent(decisionId)}`, {
+            cache: "no-store",
+          });
+          transientFetchFailures = 0;
+        } catch (err) {
+          transientFetchFailures += 1;
+          if (transientFetchFailures >= 5) {
+            throw new Error(
+              `Council status connection failed after 5 retries: ${err instanceof Error ? err.message : "network error"}`,
+            );
+          }
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          continue;
+        }
         const raw = await response.text();
         let payload: {
           error?: string;
