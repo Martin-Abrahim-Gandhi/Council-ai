@@ -123,6 +123,7 @@ async function askModel(system: string, user: string): Promise<string> {
     body: JSON.stringify({
       model: MODEL,
       temperature: 0.2,
+      response_format: { type: "json_object" },
       messages: [
         { role: "system", content: system },
         { role: "user", content: user },
