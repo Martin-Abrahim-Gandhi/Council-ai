@@ -150,7 +150,7 @@ async function askModel(system: string, user: string): Promise<string> {
     body: JSON.stringify({
       model: MODEL,
       temperature: 0.2,
-      max_tokens: 900,
+      max_tokens: 1400,
       reasoning_effort: "low",
       chat_template_kwargs: { clear_thinking: true },
       response_format: { type: "json_object" },
@@ -179,9 +179,13 @@ async function askModel(system: string, user: string): Promise<string> {
   });
 
   const data = await response.json();
-  const text = data?.choices?.[0]?.message?.content;
+  const choice = data?.choices?.[0];
+  const text = choice?.message?.content;
   if (typeof text !== "string" || !text.trim()) {
     throw new Error("NVIDIA NIM returned no message content.");
+  }
+  if (choice?.finish_reason === "length") {
+    throw new Error("NVIDIA NIM JSON response was truncated at the output limit.");
   }
   return text;
 }
@@ -362,7 +366,9 @@ Return ONLY valid JSON:
   },
   "voice_support": {"king": true, "lincoln": true, "gandhi": true},
   "why_stopped": "empty when all gates pass and all three support the answer; otherwise exact reason for no consensus or escalation"
-}`;
+}
+
+Keep every field concise. Keep the complete JSON response comfortably below 700 tokens.`;
   return jsonObject(await askModel(system, JSON.stringify({ question, context, deliberations })));
 }
 
