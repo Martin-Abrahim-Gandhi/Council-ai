@@ -79,7 +79,7 @@ export default function CouncilDashboard({ email, data }: { email: string; data:
 
         if (payload.decision_id) decisionId = payload.decision_id;
         if (stage === "chamber") {
-          finalPayload = payload;
+          finalPayload = payload as unknown as typeof finalPayload;
         }
       }
 
