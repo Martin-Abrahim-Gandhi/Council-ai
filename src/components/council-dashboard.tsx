@@ -38,9 +38,15 @@ export default function CouncilDashboard({ email, data }: { email: string; data:
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question, context }),
       });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error ?? "Deliberation failed.");
-      setResult(payload);
+      const raw = await response.text();
+      let payload: { error?: string; status?: string; final_advice?: string | null; supreme_gate?: { passed: boolean; explanation: string }; authority_checks?: Record<string, boolean> } = {};
+      try {
+        payload = JSON.parse(raw);
+      } catch {
+        payload = { error: raw.slice(0, 500) || `Server returned HTTP ${response.status}.` };
+      }
+      if (!response.ok) throw new Error(payload.error ?? `Deliberation failed (HTTP ${response.status}).`);
+      setResult(payload as typeof result);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Deliberation failed.");
     } finally {
