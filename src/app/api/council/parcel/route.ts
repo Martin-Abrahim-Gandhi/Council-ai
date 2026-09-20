@@ -71,6 +71,7 @@ export async function POST(request: Request) {
           console.error("[council:parcel] background failure", { stage, decisionId, error: message });
           await supabase.from("council_decisions").update({
             action_payload: {
+              ...(typeof input.decisionId === "string" ? {} : {}),
               parcel_error: message,
               parcel_failed_stage: stage,
             },
@@ -122,7 +123,7 @@ export async function GET(request: Request) {
     parcel_stage: typeof payload.parcel_stage === "string" ? payload.parcel_stage : "created",
     parcel_error: typeof payload.parcel_error === "string" ? payload.parcel_error : null,
     parcel_failed_stage: typeof payload.parcel_failed_stage === "string" ? payload.parcel_failed_stage : null,
-    complete: payload.parcel_stage === "chamber" && Boolean(decision.final_advice),
+    complete: payload.parcel_stage === "chamber",
     gate_evaluation: payload.gate_evaluation ?? null,
     voice_support: payload.voice_support ?? null,
   });
