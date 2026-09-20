@@ -69,9 +69,15 @@ export async function POST(request: Request) {
         } catch (error) {
           const message = error instanceof Error ? error.message : "Council parcel failed.";
           console.error("[council:parcel] background failure", { stage, decisionId, error: message });
+          const { data: failedDecision } = await supabase
+            .from("council_decisions")
+            .select("action_payload")
+            .eq("id", decisionId)
+            .eq("user_id", input.userId)
+            .single();
           await supabase.from("council_decisions").update({
             action_payload: {
-              ...(typeof input.decisionId === "string" ? {} : {}),
+              ...((failedDecision?.action_payload ?? {}) as Record<string, unknown>),
               parcel_error: message,
               parcel_failed_stage: stage,
             },
