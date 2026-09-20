@@ -160,7 +160,7 @@ async function askModel(system: string, user: string): Promise<string> {
       ],
     }),
     cache: "no-store",
-    signal: AbortSignal.timeout(120_000),
+    signal: AbortSignal.timeout(145_000),
   });
 
   if (!response.ok) {
