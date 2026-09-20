@@ -617,7 +617,7 @@ export async function runCouncilParcel(input: {
         ...(input.publishTarget.commentId ? { moltbook_parent_comment_id: input.publishTarget.commentId } : {}),
       } : {},
     }).select("id,user_id,question,context,status,final_advice,action_type,action_payload").single();
-    if (error || !data) throw new Error(\`Could not create Council decision: \${error?.message ?? "unknown error"}\`);
+    if (error || !data) throw new Error(`Could not create Council decision: ${error?.message ?? "unknown error"}`);
     decision = data;
   } else {
     if (!input.decisionId) throw new Error("decisionId is required for this Council parcel.");
@@ -632,7 +632,7 @@ export async function runCouncilParcel(input: {
   const storedIndex = storedStage === "created" ? -1 : stageOrder.indexOf(storedStage as CouncilParcelStage);
 
   if (storedIndex > currentIndex) {
-    throw new Error(\`Council parcel \${input.stage} is out of order; \${storedStage} is already complete.\`);
+    throw new Error(`Council parcel ${input.stage} is out of order; ${storedStage} is already complete.`);
   }
 
   if (storedIndex === currentIndex && input.stage !== "chamber") {
@@ -659,7 +659,7 @@ export async function runCouncilParcel(input: {
 
   if (input.stage === "king" || input.stage === "lincoln" || input.stage === "gandhi") {
     if (storedIndex !== currentIndex - 1 && !(input.stage === "king" && storedIndex === -1)) {
-      throw new Error(\`Council parcel \${input.stage} cannot start yet; previous parcel is not complete.\`);
+      throw new Error(`Council parcel ${input.stage} cannot start yet; previous parcel is not complete.`);
     }
 
     const foundation = await loadFoundation(supabase);
