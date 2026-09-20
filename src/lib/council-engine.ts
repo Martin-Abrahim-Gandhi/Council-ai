@@ -124,6 +124,8 @@ async function askModel(system: string, user: string): Promise<string> {
       model: MODEL,
       temperature: 0.2,
       max_tokens: 900,
+      reasoning_effort: "low",
+      chat_template_kwargs: { clear_thinking: true },
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: system },
