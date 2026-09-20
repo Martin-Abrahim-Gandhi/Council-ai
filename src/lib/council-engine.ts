@@ -268,8 +268,8 @@ async function deliberateVoice(
     .filter((source) => focusedTitles.includes(source.title))
     .slice(0, 5);
   const focusedSourceIds = focusedSources.map((source) => source.id);
-  const focusedClaims = data.claims.slice(0, 6);
-  const focusedDebates = data.debates.slice(0, 4);
+  const focusedClaims = data.claims.slice(0, 4);
+  const focusedDebates = data.debates.slice(0, 2);
 
   const system = `You occupy the ${VOICE_NAMES[voice]} SEAT inside Council.
 
