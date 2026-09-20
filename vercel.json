@@ -4,5 +4,6 @@
       "path": "/api/cron/moltbook",
       "schedule": "0 0 * * *"
     }
-  ]
+  ],
+  "version": 2
 }
