@@ -19,6 +19,7 @@ export default function CouncilDashboard({ email, data }: { email: string; data:
   const [question, setQuestion] = useState("");
   const [context, setContext] = useState("");
   const [running, setRunning] = useState(false);
+  const [parcelStage, setParcelStage] = useState<"king" | "lincoln" | "gandhi" | "chamber" | null>(null);
   const [result, setResult] = useState<{ status: string; final_advice: string | null; supreme_gate: { passed: boolean; explanation: string }; authority_checks: Record<string, boolean> } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedEscalation, setSelectedEscalation] = useState<CouncilEscalation | null>(data.escalations[0] ?? null);
@@ -32,24 +33,62 @@ export default function CouncilDashboard({ email, data }: { email: string; data:
     setRunning(true);
     setError(null);
     setResult(null);
+    setParcelStage("king");
+
     try {
-      const response = await fetch("/api/council/deliberate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, context }),
-      });
-      const raw = await response.text();
-      let payload: { error?: string; status?: string; final_advice?: string | null; supreme_gate?: { passed: boolean; explanation: string }; authority_checks?: Record<string, boolean> } = {};
-      try {
-        payload = JSON.parse(raw);
-      } catch {
-        payload = { error: raw.slice(0, 500) || `Server returned HTTP ${response.status}.` };
+      let decisionId: string | null = null;
+      let finalPayload: {
+        status: string;
+        final_advice: string | null;
+        supreme_gate: { passed: boolean; explanation: string };
+        authority_checks: Record<string, boolean>;
+      } | null = null;
+
+      const stages = ["king", "lincoln", "gandhi", "chamber"] as const;
+      for (const stage of stages) {
+        setParcelStage(stage);
+        const response = await fetch("/api/council/parcel", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            stage === "king"
+              ? { stage, question, context }
+              : { stage, decisionId },
+          ),
+        });
+
+        const raw = await response.text();
+        let payload: {
+          error?: string;
+          decision_id?: string;
+          status?: string;
+          final_advice?: string | null;
+          supreme_gate?: { passed: boolean; explanation: string };
+          authority_checks?: Record<string, boolean>;
+        } = {};
+
+        try {
+          payload = JSON.parse(raw);
+        } catch {
+          payload = { error: raw.slice(0, 500) || `Server returned HTTP ${response.status}.` };
+        }
+
+        if (!response.ok) {
+          throw new Error(payload.error ?? `Council parcel ${stage} failed (HTTP ${response.status}).`);
+        }
+
+        if (payload.decision_id) decisionId = payload.decision_id;
+        if (stage === "chamber") {
+          finalPayload = payload as typeof finalPayload;
+        }
       }
-      if (!response.ok) throw new Error(payload.error ?? `Deliberation failed (HTTP ${response.status}).`);
-      setResult(payload as typeof result);
+
+      if (!finalPayload) throw new Error("Council Chamber did not return a final result.");
+      setResult(finalPayload);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Deliberation failed.");
+      setError(err instanceof Error ? err.message : "Council deliberation failed.");
     } finally {
+      setParcelStage(null);
       setRunning(false);
     }
   }
@@ -216,7 +255,7 @@ export default function CouncilDashboard({ email, data }: { email: string; data:
               <h2>Give the Council something to deliberate.</h2>
               <label>Question<input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="What should the Council consider?" /></label>
               <label>Context<textarea value={context} onChange={(event) => setContext(event.target.value)} rows={7} placeholder="Evidence, circumstances, or conversation context..." /></label>
-              <button className="primary" disabled={running || !question.trim()} onClick={deliberate}>{running ? "Council is deliberating…" : "Begin deliberation"}</button>
+              <button className="primary" disabled={running || !question.trim()} onClick={deliberate}>{running ? `Council parcel: ${parcelStage ?? "starting"}…` : "Begin deliberation"}</button>
               <div className="approval-note">The supreme preservation-of-life gate is absolute. Then King, Lincoln, and Gandhi must independently pass their authority tests. There is no human approval gate.</div>
               {error && <div className="approval-note">{error}</div>}
               {result && (
