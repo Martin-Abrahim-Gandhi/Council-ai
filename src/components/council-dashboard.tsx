@@ -72,6 +72,7 @@ export default function CouncilDashboard({ email, data }: { email: string; data:
           parcel_stage?: string;
           parcel_error?: string | null;
           parcel_failed_stage?: string | null;
+          complete?: boolean;
           gate_evaluation?: {
             preservation_of_life?: { passed: boolean; explanation: string };
             king?: { passed: boolean; explanation: string };
