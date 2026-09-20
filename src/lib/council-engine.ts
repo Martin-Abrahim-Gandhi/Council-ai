@@ -595,7 +595,7 @@ export async function runCouncilParcel(input: {
   userId: string;
   conversationId?: string | null;
   publishTarget?: { kind: "post" | "comment"; postId?: string; commentId?: string };
-}): Promise<CouncilRunResult & { stage: CouncilParcelStage; complete: boolean; decision_id: string }> {
+}): Promise<Omit<CouncilRunResult, "status"> & { status: CouncilRunResult["status"] | "deliberating"; stage: CouncilParcelStage; complete: boolean; decision_id: string }> {
   const supabase = await createSupabaseServerClient();
   let decision: any;
 
