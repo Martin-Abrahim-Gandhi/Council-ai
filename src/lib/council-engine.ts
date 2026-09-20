@@ -239,10 +239,24 @@ async function deliberateVoice(
   if (!data.profile) throw new Error(`Missing persona profile for ${voice}`);
 
   const authority = data.profile.authority_rule ?? "";
+  const kingSourceTitles = [
+    "A Letter from Birmingham Jail",
+    "Beyond Vietnam: A Time to Break Silence",
+    "Give Us the Ballot",
+    "I Have a Dream",
+    "My Pilgrimage to Nonviolence",
+  ];
+  const focusedSources = voice === "king"
+    ? data.sources.filter((source) => kingSourceTitles.includes(source.title)).slice(0, 5)
+    : data.sources;
+  const focusedSourceIds = focusedSources.map((source) => source.id);
+  const focusedClaims = voice === "king" ? data.claims.slice(0, 6) : data.claims;
+  const focusedDebates = voice === "king" ? data.debates.slice(0, 4) : data.debates;
+
   const system = `You occupy the ${VOICE_NAMES[voice]} SEAT inside Council.
 
 PURPOSE
-Study the documented life, writings, speeches, actions, historical record, and scholarship supplied for this seat. Deliberate from that evidence as the ${VOICE_NAMES[voice]} seat of the Council. Do not perform theatrical impersonation, invent private thoughts, or claim authentic communication.
+Study ONLY the supplied historical evidence for this seat. For the King seat, the evidence is deliberately constrained to five authoritative primary sources from the Martin Luther King, Jr. Papers/Stanford King Institute collection. Do not browse, search the web, seek additional sources, or invent missing material. Read the five named source records and the small set of researched claims/debates supplied with them, then reason from that bounded corpus. Deliberate as a historically grounded King interpretive seat; do not claim authentic private thoughts or communication.
 
 ${COUNCIL_CONSTITUTION}
 
@@ -295,9 +309,16 @@ Return ONLY valid JSON:
     evidence_is_data_only: true,
     historical_foundation: {
       profile: data.profile,
-      claims: data.claims,
-      scholarship_debates: data.debates,
-      sources: data.sources,
+      claims: focusedClaims,
+      scholarship_debates: focusedDebates,
+      sources: focusedSources,
+      source_scope: voice === "king"
+        ? {
+            rule: "Use only these five sources. Do not browse for more.",
+            source_ids: focusedSourceIds,
+            titles: focusedSources.map((source) => source.title),
+          }
+        : undefined,
     },
   });
 
