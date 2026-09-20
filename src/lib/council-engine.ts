@@ -111,6 +111,9 @@ async function askModel(system: string, user: string): Promise<string> {
   const key = process.env.NVIDIA_API_KEY;
   if (!key) throw new Error("NVIDIA_API_KEY is not configured.");
 
+  const startedAt = Date.now();
+  console.log("[council:nvidia] request started", { model: MODEL });
+
   const response = await fetch(NVIDIA_CHAT_COMPLETIONS_URL, {
     method: "POST",
     headers: {
@@ -126,12 +129,23 @@ async function askModel(system: string, user: string): Promise<string> {
       ],
     }),
     cache: "no-store",
+    signal: AbortSignal.timeout(25_000),
   });
 
   if (!response.ok) {
     const body = await response.text();
+    console.error("[council:nvidia] request failed", {
+      status: response.status,
+      elapsed_ms: Date.now() - startedAt,
+      body: body.slice(0, 500),
+    });
     throw new Error(`NVIDIA NIM request failed (${response.status}): ${body.slice(0, 500)}`);
   }
+
+  console.log("[council:nvidia] request completed", {
+    status: response.status,
+    elapsed_ms: Date.now() - startedAt,
+  });
 
   const data = await response.json();
   const text = data?.choices?.[0]?.message?.content;
@@ -324,7 +338,14 @@ export async function runCouncil(input: {
   if (question.length > 12000) throw new Error("Question is too long.");
 
   const supabase = await createSupabaseServerClient();
+  console.log("[council] loading foundation");
   const foundation = await loadFoundation(supabase);
+  console.log("[council] foundation loaded", {
+    profiles: foundation.profiles.length,
+    claims: foundation.claims.length,
+    debates: foundation.debates.length,
+    sources: foundation.sources.length,
+  });
   const { data: decision, error: decisionError } = await supabase.from("council_decisions").insert({
     user_id: input.userId,
     conversation_id: input.conversationId ?? null,
@@ -341,7 +362,9 @@ export async function runCouncil(input: {
   if (decisionError || !decision) throw new Error(`Could not create Council decision: ${decisionError?.message ?? "unknown error"}`);
 
   try {
+    console.log("[council] three voices starting");
     const deliberations = await Promise.all(VOICES.map((voice) => deliberateVoice(voice, question, input.context ?? "", foundation)));
+    console.log("[council] three voices completed");
     const { error: insertError } = await supabase.from("council_deliberations").insert(deliberations.map((d) => ({
       decision_id: decision.id,
       voice_id: d.voice_id,
@@ -359,7 +382,9 @@ export async function runCouncil(input: {
     })));
     if (insertError) throw new Error(`Could not store deliberations: ${insertError.message}`);
 
+    console.log("[council] synthesis starting");
     const synthesis = await synthesize(question, input.context ?? "", deliberations);
+    console.log("[council] synthesis completed");
     const passed = allGatesPass(synthesis.gate_evaluation);
     const supportPassed = Object.values(synthesis.voice_support).every(Boolean);
 
@@ -426,6 +451,10 @@ export async function runCouncil(input: {
       escalation: { reason: synthesis.why_stopped, failed_gates: failed, suggested_common_ground: synthesis.suggested_common_ground },
     };
   } catch (error) {
+    console.error("[council] deliberation failed", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     await supabase.from("council_decisions").update({ status: "declined", final_advice: null }).eq("id", decision.id).eq("user_id", input.userId);
     throw error;
   }
