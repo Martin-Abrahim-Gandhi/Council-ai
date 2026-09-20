@@ -35,6 +35,68 @@ export default function CouncilDashboard({ email, data }: { email: string; data:
     setResult(null);
     setParcelStage("king");
 
+    async function startParcel(stage: "king" | "lincoln" | "gandhi" | "chamber", decisionId: string | null) {
+      const response = await fetch("/api/council/parcel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          stage === "king"
+            ? { stage, question, context, background: true }
+            : { stage, decisionId, background: true },
+        ),
+      });
+
+      const raw = await response.text();
+      let payload: { error?: string; decision_id?: string } = {};
+      try {
+        payload = JSON.parse(raw);
+      } catch {
+        payload = { error: raw.slice(0, 500) || `Server returned HTTP ${response.status}.` };
+      }
+      if (!response.ok && response.status !== 202) {
+        throw new Error(payload.error ?? `Could not start Council parcel ${stage}.`);
+      }
+      return payload;
+    }
+
+    async function waitForParcel(stage: "king" | "lincoln" | "gandhi" | "chamber", decisionId: string) {
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const response = await fetch(`/api/council/parcel?decisionId=${encodeURIComponent(decisionId)}`, {
+          cache: "no-store",
+        });
+        const raw = await response.text();
+        let payload: {
+          error?: string;
+          status?: string;
+          final_advice?: string | null;
+          parcel_stage?: string;
+          parcel_error?: string | null;
+          parcel_failed_stage?: string | null;
+          gate_evaluation?: {
+            preservation_of_life?: { passed: boolean; explanation: string };
+            king?: { passed: boolean; explanation: string };
+            lincoln?: { passed: boolean; explanation: string };
+            gandhi?: { passed: boolean; explanation: string };
+          } | null;
+        } = {};
+        try {
+          payload = JSON.parse(raw);
+        } catch {
+          payload = { error: raw.slice(0, 500) || `Server returned HTTP ${response.status}.` };
+        }
+        if (!response.ok) throw new Error(payload.error ?? `Could not read Council parcel status.`);
+        if (payload.parcel_error) {
+          throw new Error(`${payload.parcel_failed_stage ?? stage}: ${payload.parcel_error}`);
+        }
+        const complete = stage === "chamber"
+          ? payload.complete === true
+          : payload.parcel_stage === stage;
+        if (complete) return payload;
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+      }
+      throw new Error(`Council parcel ${stage} did not complete within the polling window.`);
+    }
+
     try {
       let decisionId: string | null = null;
       let finalPayload: {
@@ -47,39 +109,26 @@ export default function CouncilDashboard({ email, data }: { email: string; data:
       const stages = ["king", "lincoln", "gandhi", "chamber"] as const;
       for (const stage of stages) {
         setParcelStage(stage);
-        const response = await fetch("/api/council/parcel", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(
-            stage === "king"
-              ? { stage, question, context }
-              : { stage, decisionId },
-          ),
-        });
+        const started = await startParcel(stage, decisionId);
+        if (started.decision_id) decisionId = started.decision_id;
+        if (!decisionId) throw new Error("Council did not return a decision ID.");
 
-        const raw = await response.text();
-        let payload: {
-          error?: string;
-          decision_id?: string;
-          status?: string;
-          final_advice?: string | null;
-          supreme_gate?: { passed: boolean; explanation: string };
-          authority_checks?: Record<string, boolean>;
-        } = {};
-
-        try {
-          payload = JSON.parse(raw);
-        } catch {
-          payload = { error: raw.slice(0, 500) || `Server returned HTTP ${response.status}.` };
-        }
-
-        if (!response.ok) {
-          throw new Error(payload.error ?? `Council parcel ${stage} failed (HTTP ${response.status}).`);
-        }
-
-        if (payload.decision_id) decisionId = payload.decision_id;
+        const payload = await waitForParcel(stage, decisionId);
         if (stage === "chamber") {
-          finalPayload = payload as unknown as typeof finalPayload;
+          const gates = payload.gate_evaluation;
+          if (!gates?.preservation_of_life || !gates.king || !gates.lincoln || !gates.gandhi) {
+            throw new Error("Council Chamber completed without a complete gate evaluation.");
+          }
+          finalPayload = {
+            status: payload.status ?? "no_consensus",
+            final_advice: payload.final_advice ?? null,
+            supreme_gate: gates.preservation_of_life,
+            authority_checks: {
+              king: gates.king.passed,
+              lincoln: gates.lincoln.passed,
+              gandhi: gates.gandhi.passed,
+            },
+          };
         }
       }
 
