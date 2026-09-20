@@ -470,7 +470,7 @@ async function deliberateVoiceWithRetry(
     try {
       console.log("[council:parcel] voice attempt", { voice, attempt });
       const result = await deliberateVoice(voice, question, context, foundation);
-      if (!isVoiceResult(result)) throw new Error(\`Invalid \${voice} deliberation structure.\`);
+      if (!isVoiceResult(result)) throw new Error(`Invalid ${voice} deliberation structure.`);
       return result;
     } catch (error) {
       lastError = error;
@@ -482,7 +482,7 @@ async function deliberateVoiceWithRetry(
       if (attempt === 2) break;
     }
   }
-  throw lastError instanceof Error ? lastError : new Error(\`The \${voice} parcel failed.\`);
+  throw lastError instanceof Error ? lastError : new Error(`The ${voice} parcel failed.`);
 }
 
 async function synthesizeWithRetry(
@@ -553,7 +553,7 @@ async function saveVoiceDeliberation(
     supports_advice: result.supports_advice,
   }).select("id").single();
 
-  if (error || !data) throw new Error(\`Could not store \${result.voice_id} deliberation: \${error?.message ?? "unknown error"}\`);
+  if (error || !data) throw new Error(`Could not store ${result.voice_id} deliberation: ${error?.message ?? "unknown error"}`);
   return data.id as string;
 }
 
@@ -565,7 +565,7 @@ async function loadStoredDeliberations(
     .select("voice_id,position,reasoning,principle_check,supports_advice")
     .eq("decision_id", decisionId);
 
-  if (error) throw new Error(\`Could not load stored deliberations: \${error.message}\`);
+  if (error) throw new Error(`Could not load stored deliberations: ${error.message}`);
 
   return (data ?? []).map((row) => {
     const principle = (row.principle_check ?? {}) as Record<string, any>;
