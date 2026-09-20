@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
-import { runCouncilParcel, type VoiceId } from "@/lib/council-engine";
+import { runCouncilParcel } from "@/lib/council-engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
