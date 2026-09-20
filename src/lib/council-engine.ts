@@ -99,7 +99,7 @@ const VOICE_NAMES: Record<VoiceId, string> = {
 };
 
 // NVIDIA-hosted NIM API Catalog endpoint. Keep this key server-side.
-const MODEL = process.env.COUNCIL_MODEL ?? "z-ai/glm-5-3";
+const MODEL = process.env.COUNCIL_MODEL ?? "z-ai/glm-5.3";
 const NVIDIA_CHAT_COMPLETIONS_URL = "https://integrate.api.nvidia.com/v1/chat/completions";
 
 function jsonObject<T>(value: string): T {
