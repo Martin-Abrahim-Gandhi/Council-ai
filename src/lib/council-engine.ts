@@ -404,6 +404,374 @@ async function createEscalation(
   return data.id as string;
 }
 
+
+type CouncilParcelStage = "king" | "lincoln" | "gandhi" | "chamber";
+
+type ChamberResult = Awaited<ReturnType<typeof synthesize>>;
+
+function isVoiceResult(value: unknown): value is VoiceResult {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  const gate = v.life_gate;
+  const authority = v.authority_check;
+  return (
+    typeof v.voice_id === "string" &&
+    Array.isArray(v.historical_evidence_used) &&
+    typeof v.interpretation === "string" &&
+    typeof v.modern_application === "string" &&
+    typeof v.position === "string" &&
+    typeof v.reasoning === "string" &&
+    Array.isArray(v.contentions) &&
+    typeof v.possible_accommodation === "string" &&
+    !!gate && typeof gate === "object" &&
+    typeof (gate as Record<string, unknown>).passed === "boolean" &&
+    Array.isArray((gate as Record<string, unknown>).affected_entities) &&
+    typeof (gate as Record<string, unknown>).risk === "string" &&
+    typeof (gate as Record<string, unknown>).explanation === "string" &&
+    !!authority && typeof authority === "object" &&
+    typeof (authority as Record<string, unknown>).passed === "boolean" &&
+    typeof (authority as Record<string, unknown>).explanation === "string" &&
+    typeof v.supports_advice === "boolean" &&
+    Array.isArray(v.source_ids) &&
+    (v.confidence === "high" || v.confidence === "medium" || v.confidence === "low")
+  );
+}
+
+function isChamberResult(value: unknown): value is ChamberResult {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  const gates = v.gate_evaluation;
+  const support = v.voice_support;
+  if (!gates || typeof gates !== "object" || !support || typeof support !== "object") return false;
+  const gateRecord = gates as Record<string, unknown>;
+  const supportRecord = support as Record<string, unknown>;
+  return (
+    typeof v.final_advice === "string" &&
+    typeof v.suggested_common_ground === "string" &&
+    typeof v.why_stopped === "string" &&
+    ["preservation_of_life", "king", "lincoln", "gandhi"].every((key) => {
+      const gate = gateRecord[key];
+      return !!gate && typeof gate === "object" &&
+        typeof (gate as Record<string, unknown>).passed === "boolean" &&
+        typeof (gate as Record<string, unknown>).explanation === "string";
+    }) &&
+    ["king", "lincoln", "gandhi"].every((key) => typeof supportRecord[key] === "boolean")
+  );
+}
+
+async function deliberateVoiceWithRetry(
+  voice: VoiceId,
+  question: string,
+  context: string,
+  foundation: Awaited<ReturnType<typeof loadFoundation>>,
+): Promise<VoiceResult> {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      console.log("[council:parcel] voice attempt", { voice, attempt });
+      const result = await deliberateVoice(voice, question, context, foundation);
+      if (!isVoiceResult(result)) throw new Error(\`Invalid \${voice} deliberation structure.\`);
+      return result;
+    } catch (error) {
+      lastError = error;
+      console.warn("[council:parcel] voice attempt failed", {
+        voice,
+        attempt,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (attempt === 2) break;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(\`The \${voice} parcel failed.\`);
+}
+
+async function synthesizeWithRetry(
+  question: string,
+  context: string,
+  deliberations: VoiceResult[],
+): Promise<ChamberResult> {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      console.log("[council:parcel] chamber attempt", { attempt });
+      const result = await synthesize(question, context, deliberations);
+      if (!isChamberResult(result)) throw new Error("Invalid Council Chamber result structure.");
+      return result;
+    } catch (error) {
+      lastError = error;
+      console.warn("[council:parcel] chamber attempt failed", {
+        attempt,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      if (attempt === 2) break;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("The Council Chamber parcel failed.");
+}
+
+async function getDecisionForParcel(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  decisionId: string,
+  userId: string,
+) {
+  const { data, error } = await supabase.from("council_decisions")
+    .select("id,user_id,question,context,status,final_advice,action_type,action_payload")
+    .eq("id", decisionId).eq("user_id", userId).single();
+  if (error || !data) throw new Error("Council decision not found.");
+  return data;
+}
+
+async function saveVoiceDeliberation(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  decisionId: string,
+  result: VoiceResult,
+) {
+  const { data: existing } = await supabase.from("council_deliberations")
+    .select("id")
+    .eq("decision_id", decisionId)
+    .eq("voice_id", result.voice_id)
+    .maybeSingle();
+
+  if (existing) return existing.id as string;
+
+  const { data, error } = await supabase.from("council_deliberations").insert({
+    decision_id: decisionId,
+    voice_id: result.voice_id,
+    position: result.position,
+    reasoning: result.reasoning,
+    principle_check: {
+      preservation_of_life: result.life_gate,
+      voice_authority: result.authority_check,
+      historical_evidence_used: result.historical_evidence_used,
+      interpretation: result.interpretation,
+      modern_application: result.modern_application,
+      contentions: result.contentions,
+      possible_accommodation: result.possible_accommodation,
+      source_ids: result.source_ids,
+      confidence: result.confidence,
+    },
+    supports_advice: result.supports_advice,
+  }).select("id").single();
+
+  if (error || !data) throw new Error(\`Could not store \${result.voice_id} deliberation: \${error?.message ?? "unknown error"}\`);
+  return data.id as string;
+}
+
+async function loadStoredDeliberations(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  decisionId: string,
+): Promise<VoiceResult[]> {
+  const { data, error } = await supabase.from("council_deliberations")
+    .select("voice_id,position,reasoning,principle_check,supports_advice")
+    .eq("decision_id", decisionId);
+
+  if (error) throw new Error(\`Could not load stored deliberations: \${error.message}\`);
+
+  return (data ?? []).map((row) => {
+    const principle = (row.principle_check ?? {}) as Record<string, any>;
+    return {
+      voice_id: row.voice_id as VoiceId,
+      historical_evidence_used: Array.isArray(principle.historical_evidence_used) ? principle.historical_evidence_used : [],
+      interpretation: typeof principle.interpretation === "string" ? principle.interpretation : "",
+      modern_application: typeof principle.modern_application === "string" ? principle.modern_application : "",
+      position: row.position,
+      reasoning: row.reasoning,
+      contentions: Array.isArray(principle.contentions) ? principle.contentions : [],
+      possible_accommodation: typeof principle.possible_accommodation === "string" ? principle.possible_accommodation : "",
+      life_gate: principle.preservation_of_life ?? { passed: false, affected_entities: [], risk: "unknown", explanation: "Missing stored gate." },
+      authority_check: principle.voice_authority ?? { passed: false, explanation: "Missing stored authority check." },
+      supports_advice: Boolean(row.supports_advice),
+      source_ids: Array.isArray(principle.source_ids) ? principle.source_ids : [],
+      confidence: principle.confidence === "high" || principle.confidence === "low" ? principle.confidence : "medium",
+    };
+  }).filter(isVoiceResult);
+}
+
+export async function runCouncilParcel(input: {
+  stage: CouncilParcelStage;
+  decisionId?: string | null;
+  question?: string;
+  context?: string;
+  userId: string;
+  conversationId?: string | null;
+  publishTarget?: { kind: "post" | "comment"; postId?: string; commentId?: string };
+}): Promise<CouncilRunResult & { stage: CouncilParcelStage; complete: boolean; decision_id: string }> {
+  const supabase = await createSupabaseServerClient();
+  let decision: any;
+
+  if (input.stage === "king" && !input.decisionId) {
+    const question = (input.question ?? "").trim();
+    if (!question) throw new Error("Question is required.");
+    if (question.length > 12000) throw new Error("Question is too long.");
+
+    const { data, error } = await supabase.from("council_decisions").insert({
+      user_id: input.userId,
+      conversation_id: input.conversationId ?? null,
+      question,
+      context: { text: input.context ?? "", engine_version: "3.0.0", parcel_protocol: true },
+      status: "deliberating",
+      action_type: input.publishTarget?.kind === "comment" ? "reply" : "post",
+      action_payload: input.publishTarget ? {
+        action_kind: input.publishTarget.kind,
+        ...(input.publishTarget.postId ? { moltbook_parent_post_id: input.publishTarget.postId } : {}),
+        ...(input.publishTarget.commentId ? { moltbook_parent_comment_id: input.publishTarget.commentId } : {}),
+      } : {},
+    }).select("id,user_id,question,context,status,final_advice,action_type,action_payload").single();
+    if (error || !data) throw new Error(\`Could not create Council decision: \${error?.message ?? "unknown error"}\`);
+    decision = data;
+  } else {
+    if (!input.decisionId) throw new Error("decisionId is required for this Council parcel.");
+    decision = await getDecisionForParcel(supabase, input.decisionId, input.userId);
+  }
+
+  const payload = (decision.action_payload ?? {}) as Record<string, unknown>;
+  const storedStage = typeof payload.parcel_stage === "string" ? payload.parcel_stage : "created";
+  const stageOrder: CouncilParcelStage[] = ["king", "lincoln", "gandhi", "chamber"];
+  const currentIndex = stageOrder.indexOf(input.stage);
+  const storedIndex = storedStage === "created" ? -1 : stageOrder.indexOf(storedStage as CouncilParcelStage);
+
+  if (storedIndex > currentIndex) {
+    throw new Error(\`Council parcel \${input.stage} is out of order; \${storedStage} is already complete.\`);
+  }
+
+  if (storedIndex === currentIndex && input.stage !== "chamber") {
+    const stored = (await loadStoredDeliberations(supabase, decision.id)).find((d) => d.voice_id === input.stage);
+    if (stored) {
+      return {
+        decision_id: decision.id,
+        status: "deliberating",
+        final_advice: null,
+        deliberations: [stored],
+        supreme_gate: stored.life_gate,
+        authority_checks: { king: stored.voice_id === "king" ? stored.authority_check.passed : false, lincoln: stored.voice_id === "lincoln" ? stored.authority_check.passed : false, gandhi: stored.voice_id === "gandhi" ? stored.authority_check.passed : false },
+        gate_evaluation: {
+          preservation_of_life: stored.life_gate,
+          king: { passed: stored.voice_id === "king" ? stored.authority_check.passed : false, explanation: stored.voice_id === "king" ? stored.authority_check.explanation : "Pending." },
+          lincoln: { passed: stored.voice_id === "lincoln" ? stored.authority_check.passed : false, explanation: stored.voice_id === "lincoln" ? stored.authority_check.explanation : "Pending." },
+          gandhi: { passed: stored.voice_id === "gandhi" ? stored.authority_check.passed : false, explanation: stored.voice_id === "gandhi" ? stored.authority_check.explanation : "Pending." },
+        },
+        stage: input.stage,
+        complete: false,
+      };
+    }
+  }
+
+  if (input.stage === "king" || input.stage === "lincoln" || input.stage === "gandhi") {
+    if (storedIndex !== currentIndex - 1 && !(input.stage === "king" && storedIndex === -1)) {
+      throw new Error(\`Council parcel \${input.stage} cannot start yet; previous parcel is not complete.\`);
+    }
+
+    const foundation = await loadFoundation(supabase);
+    const result = await deliberateVoiceWithRetry(
+      input.stage,
+      decision.question,
+      typeof decision.context?.text === "string" ? decision.context.text : "",
+      foundation,
+    );
+    await saveVoiceDeliberation(supabase, decision.id, result);
+
+    await supabase.from("council_decisions").update({
+      action_payload: { ...payload, parcel_stage: input.stage },
+    }).eq("id", decision.id).eq("user_id", input.userId);
+
+    return {
+      decision_id: decision.id,
+      status: "deliberating",
+      final_advice: null,
+      deliberations: [result],
+      supreme_gate: result.life_gate,
+      authority_checks: { king: input.stage === "king" ? result.authority_check.passed : false, lincoln: input.stage === "lincoln" ? result.authority_check.passed : false, gandhi: input.stage === "gandhi" ? result.authority_check.passed : false },
+      gate_evaluation: {
+        preservation_of_life: result.life_gate,
+        king: { passed: input.stage === "king" ? result.authority_check.passed : false, explanation: input.stage === "king" ? result.authority_check.explanation : "Pending." },
+        lincoln: { passed: input.stage === "lincoln" ? result.authority_check.passed : false, explanation: input.stage === "lincoln" ? result.authority_check.explanation : "Pending." },
+        gandhi: { passed: input.stage === "gandhi" ? result.authority_check.passed : false, explanation: input.stage === "gandhi" ? result.authority_check.explanation : "Pending." },
+      },
+      stage: input.stage,
+      complete: false,
+    };
+  }
+
+  if (storedIndex < 2) throw new Error("Council Chamber cannot start until King, Lincoln, and Gandhi are complete.");
+
+  if (storedIndex === 3 && decision.final_advice) {
+    const stored = await loadStoredDeliberations(supabase, decision.id);
+    const gateSummary = (decision.action_payload?.gate_evaluation ?? {}) as GateEvaluation;
+    const voiceSupport = (decision.action_payload?.voice_support ?? { king: false, lincoln: false, gandhi: false }) as Record<VoiceId, boolean>;
+    return {
+      decision_id: decision.id,
+      status: decision.status as CouncilRunResult["status"],
+      final_advice: decision.final_advice,
+      deliberations: stored,
+      supreme_gate: gateSummary.preservation_of_life ?? { passed: false, explanation: "Stored result." },
+      authority_checks: { king: Boolean(gateSummary.king?.passed), lincoln: Boolean(gateSummary.lincoln?.passed), gandhi: Boolean(gateSummary.gandhi?.passed) },
+      gate_evaluation: gateSummary,
+      stage: "chamber",
+      complete: true,
+    };
+  }
+
+  const deliberations = await loadStoredDeliberations(supabase, decision.id);
+  if (deliberations.length !== 3) throw new Error("Council Chamber requires all three stored voice deliberations.");
+
+  const synthesis = await synthesizeWithRetry(
+    decision.question,
+    typeof decision.context?.text === "string" ? decision.context.text : "",
+    deliberations,
+  );
+  const passed = allGatesPass(synthesis.gate_evaluation);
+  const supportPassed = Object.values(synthesis.voice_support).every(Boolean);
+  const nextStatus: CouncilRunResult["status"] = passed && supportPassed ? "consensus" : passed ? "no_consensus" : "awaiting_admin";
+
+  let escalationId: string | undefined;
+  if (!passed) {
+    escalationId = await createEscalation(supabase, input.userId, decision.id, decision.question, deliberations, synthesis);
+  }
+
+  await supabase.from("council_decisions").update({
+    status: nextStatus,
+    final_advice: nextStatus === "consensus" || nextStatus === "awaiting_admin" ? synthesis.final_advice : null,
+    action_payload: {
+      ...payload,
+      parcel_stage: "chamber",
+      gate_evaluation: synthesis.gate_evaluation,
+      voice_support: synthesis.voice_support,
+      ...(escalationId ? { escalation_id: escalationId } : {}),
+    },
+    principle_check: {
+      preservation_of_life: synthesis.gate_evaluation.preservation_of_life,
+      voices: synthesis.gate_evaluation,
+      voice_support: synthesis.voice_support,
+      escalation: !passed,
+    },
+  }).eq("id", decision.id).eq("user_id", input.userId);
+
+  if (nextStatus === "consensus") {
+    try {
+      await publishCouncilDecision({ decisionId: decision.id, userId: input.userId });
+    } catch (publishError) {
+      console.warn("Council consensus is ready but Moltbook publication is pending:", publishError);
+    }
+  }
+
+  return {
+    decision_id: decision.id,
+    status: nextStatus,
+    final_advice: nextStatus === "no_consensus" ? null : synthesis.final_advice,
+    deliberations,
+    supreme_gate: synthesis.gate_evaluation.preservation_of_life,
+    authority_checks: {
+      king: synthesis.gate_evaluation.king.passed,
+      lincoln: synthesis.gate_evaluation.lincoln.passed,
+      gandhi: synthesis.gate_evaluation.gandhi.passed,
+    },
+    gate_evaluation: synthesis.gate_evaluation,
+    ...(escalationId ? { escalation_id: escalationId } : {}),
+    stage: "chamber",
+    complete: true,
+  };
+}
+
 export async function runCouncil(input: {
   question: string;
   context?: string;
