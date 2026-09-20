@@ -187,9 +187,9 @@ function foundationForVoice(
 
   return {
     profile,
-    claims: claims.slice(0, 25),
-    debates: debates.slice(0, 15),
-    sources: foundation.sources.filter((s) => s.person === voice).slice(0, 35),
+    claims: claims.slice(0, 12),
+    debates: debates.slice(0, 8),
+    sources: foundation.sources.filter((s) => s.person === voice).slice(0, 12),
     sourceIds: [...sourceIds],
   };
 }
