@@ -7,20 +7,33 @@ function key() {
 }
 
 async function moltbookFetch(path: string, init: RequestInit = {}) {
-  const response = await fetch(`${BASE}${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${key()}`,
-      "Content-Type": "application/json",
-      ...(init.headers ?? {}),
-    },
-    cache: "no-store",
-  });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(`Moltbook API ${response.status}: ${body?.error ?? body?.message ?? "request failed"}`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+
+  try {
+    const response = await fetch(`${BASE}${path}`, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${key()}`,
+        "Content-Type": "application/json",
+        ...(init.headers ?? {}),
+      },
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(`Moltbook API ${response.status}: ${body?.error ?? body?.message ?? "request failed"}`);
+    }
+    return body;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("Moltbook API request timed out after 10 seconds.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-  return body;
 }
 
 export async function getMoltbookStatus() {
