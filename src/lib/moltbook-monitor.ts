@@ -61,7 +61,8 @@ async function advanceDecision(
   return { stage, status: result.status };
 }
 
-// Poll-driven inbound conversation bridge: each invocation advances one durable Council stage.\nexport async function monitorMoltbook(userId: string) {
+// Poll-driven inbound conversation bridge: each invocation advances one durable Council stage.
+export async function monitorMoltbook(userId: string) {
   const supabase = await createSupabaseServerClient();
   const home = await getMoltbookHome();
   const activities = home?.activity_on_your_posts ?? home?.data?.activity_on_your_posts ?? [];
