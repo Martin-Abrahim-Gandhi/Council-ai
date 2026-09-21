@@ -66,6 +66,10 @@ export async function createMoltbookComment(input: { postId: string; content: st
   });
 }
 
+export async function getMoltbookPost(postId: string) {
+  return moltbookFetch(`/posts/${encodeURIComponent(postId)}`);
+}
+
 export async function getMoltbookHome() {
   return moltbookFetch("/home");
 }
