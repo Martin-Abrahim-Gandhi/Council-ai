@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { monitorMoltbook } from "@/lib/moltbook-monitor";
+import { getMoltbookHome, getMoltbookMe, getMoltbookStatus } from "@/lib/moltbook";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,11 +9,29 @@ export async function GET(request: Request) {
   if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
-  const userId = process.env.COUNCIL_OPERATOR_USER_ID;
-  if (!userId) return NextResponse.json({ error: "COUNCIL_OPERATOR_USER_ID is not configured." }, { status: 500 });
+
   try {
-    return NextResponse.json(await monitorMoltbook(userId));
+    const [status, me, home] = await Promise.all([
+      getMoltbookStatus(),
+      getMoltbookMe(),
+      getMoltbookHome(),
+    ]);
+
+    const activities = home?.activity_on_your_posts ?? home?.data?.activity_on_your_posts ?? [];
+
+    return NextResponse.json({
+      ok: true,
+      heartbeat: "moltbook",
+      agent: me?.agent ?? me,
+      status,
+      activity_count: Array.isArray(activities) ? activities.length : 0,
+      checked_at: new Date().toISOString(),
+    });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Moltbook monitor failed." }, { status: 500 });
+    console.error("[moltbook:heartbeat] failed", error);
+    return NextResponse.json(
+      { ok: false, heartbeat: "moltbook", error: error instanceof Error ? error.message : "Moltbook heartbeat failed." },
+      { status: 500 },
+    );
   }
 }
