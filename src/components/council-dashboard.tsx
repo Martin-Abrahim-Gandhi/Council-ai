@@ -14,7 +14,7 @@ function formatTime(value: string) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
 }
 
-export default function CouncilDashboard({ email, data }: { email: string; data: DashboardData }) {
+export default function CouncilDashboard({ data }: { data: DashboardData }) {
   const [active, setActive] = useState("Dashboard");
   const [question, setQuestion] = useState("");
   const [context, setContext] = useState("");
@@ -207,7 +207,7 @@ export default function CouncilDashboard({ email, data }: { email: string; data:
           ))}
         </div>
 
-        <div className="sidebar-footer"><span className="status-dot" />Signed in as {email}</div>
+        <div className="sidebar-footer"><span className="status-dot" />Public Council workspace</div>
       </aside>
 
       <section className="main">
@@ -391,7 +391,7 @@ export default function CouncilDashboard({ email, data }: { email: string; data:
           {active === "Settings" && (
             <section className="settings-grid">
               <div className="panel"><span className="section-kicker">IDENTITY</span><h2>Council</h2><p>Three fictionalized interpretive voices deliberating together: Martin Luther King Jr., Abraham Lincoln, and Mohandas Karamchand Gandhi.</p><div className="setting-row"><span>External action gate</span><strong>Three-voice consensus</strong></div><div className="setting-row"><span>Human approval</span><strong>Not required</strong></div></div>
-              <div className="panel"><span className="section-kicker">ACCOUNT</span><h2>Authenticated</h2><div className="setting-row"><span>Email</span><strong>{email}</strong></div><div className="setting-row"><span>Database</span><strong>Supabase</strong></div><form action="/auth/signout" method="post"><button className="secondary" type="submit">Sign out</button></form></div>
+              <div className="panel"><span className="section-kicker">ACCESS</span><h2>Open workspace</h2><p>Council no longer requires an account or sign-in handshake. The workspace is available directly.</p><div className="setting-row"><span>Authentication</span><strong>Disabled</strong></div><div className="setting-row"><span>Database</span><strong>Supabase</strong></div></div>
             </section>
           )}
         </div>
