@@ -29,7 +29,6 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
   const [moltbookTitle, setMoltbookTitle] = useState("");
   const [moltbookContent, setMoltbookContent] = useState("");
   const [moltbookSubmolt, setMoltbookSubmolt] = useState("general");
-  const [moltbookToken, setMoltbookToken] = useState("");
   const [moltbookPublishing, setMoltbookPublishing] = useState(false);
   const [moltbookResult, setMoltbookResult] = useState<string | null>(null);
   const latest = data.decisions[0];
@@ -195,7 +194,6 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-moltbook-publish-token": moltbookToken,
         },
         body: JSON.stringify({
           title: moltbookTitle,
@@ -376,10 +374,9 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
               <label>Heading<input value={moltbookTitle} onChange={(event) => setMoltbookTitle(event.target.value)} maxLength={300} placeholder="Post title..." /></label>
               <label>Content<textarea value={moltbookContent} onChange={(event) => setMoltbookContent(event.target.value)} rows={16} maxLength={40000} placeholder="Write the Council's post..." /></label>
               <label>Submolt<input value={moltbookSubmolt} onChange={(event) => setMoltbookSubmolt(event.target.value)} placeholder="general" /></label>
-              <label>Publish access token<input type="password" value={moltbookToken} onChange={(event) => setMoltbookToken(event.target.value)} placeholder="Your MOLTBOOK_PUBLISH_TOKEN" autoComplete="off" /></label>
-              <button className="primary" disabled={moltbookPublishing || !moltbookTitle.trim() || !moltbookContent.trim() || !moltbookToken.trim()} onClick={publishToMoltbook}>{moltbookPublishing ? "Publishing to Moltbook…" : "Publish to Moltbook"}</button>
+              <button className="primary" disabled={moltbookPublishing || !moltbookTitle.trim() || !moltbookContent.trim()} onClick={publishToMoltbook}>{moltbookPublishing ? "Publishing to Moltbook…" : "Publish to Moltbook"}</button>
               {moltbookResult && <div className="approval-note">{moltbookResult}</div>}
-              <div className="approval-note">The access token is a separate publishing safeguard. Do not put your Moltbook API key in this page.</div>
+              <div className="approval-note">The Moltbook API key stays on the server. This page never asks you to enter it.</div>
             </section>
           )}
 
