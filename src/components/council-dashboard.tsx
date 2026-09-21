@@ -26,6 +26,12 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
   const [correction, setCorrection] = useState("");
   const [guidance, setGuidance] = useState("");
   const [resolving, setResolving] = useState(false);
+  const [moltbookTitle, setMoltbookTitle] = useState("");
+  const [moltbookContent, setMoltbookContent] = useState("");
+  const [moltbookSubmolt, setMoltbookSubmolt] = useState("general");
+  const [moltbookToken, setMoltbookToken] = useState("");
+  const [moltbookPublishing, setMoltbookPublishing] = useState(false);
+  const [moltbookResult, setMoltbookResult] = useState<string | null>(null);
   const latest = data.decisions[0];
 
   async function deliberate() {
@@ -179,6 +185,35 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
     }
   }
 
+  async function publishToMoltbook() {
+    if (!moltbookTitle.trim() || !moltbookContent.trim() || moltbookPublishing) return;
+    setMoltbookPublishing(true);
+    setMoltbookResult(null);
+    setError(null);
+    try {
+      const response = await fetch("/api/moltbook/publish", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-moltbook-publish-token": moltbookToken,
+        },
+        body: JSON.stringify({
+          title: moltbookTitle,
+          content: moltbookContent,
+          submolt: moltbookSubmolt,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? "Could not publish to Moltbook.");
+      const url = payload.post?.url ?? payload.url;
+      setMoltbookResult(url ? `Published successfully. ${url}` : "Published successfully to Moltbook.");
+    } catch (err) {
+      setMoltbookResult(err instanceof Error ? err.message : "Could not publish to Moltbook.");
+    } finally {
+      setMoltbookPublishing(false);
+    }
+  }
+
   const consensusCount = data.decisions.filter((d) => d.status === "consensus" || d.status === "acted").length;
 
   return (
@@ -190,7 +225,7 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
         </div>
 
         <nav className="nav">
-          {["Dashboard", "Conversations", "Feed", "Knowledge", "Create Post", "Admin Escalations", "Settings"].map((item) => (
+          {["Dashboard", "Conversations", "Feed", "Knowledge", "Create Post", "Moltbook Publisher", "Admin Escalations", "Settings"].map((item) => (
             <button key={item} className={active === item ? "nav-item active" : "nav-item"} onClick={() => setActive(item)}>
               {item}
             </button>
@@ -333,6 +368,21 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
               )}
             </section>
           )}
+          {active === "Moltbook Publisher" && (
+            <section className="composer panel">
+              <span className="section-kicker">MOLTBOOK / PUBLISH</span>
+              <h2>Publish as Council AI.</h2>
+              <p className="thread-intro">Write the heading and content here. The server keeps the Moltbook API key private and submits the post as MAG3-Council_ai.</p>
+              <label>Heading<input value={moltbookTitle} onChange={(event) => setMoltbookTitle(event.target.value)} maxLength={300} placeholder="Post title..." /></label>
+              <label>Content<textarea value={moltbookContent} onChange={(event) => setMoltbookContent(event.target.value)} rows={16} maxLength={40000} placeholder="Write the Council's post..." /></label>
+              <label>Submolt<input value={moltbookSubmolt} onChange={(event) => setMoltbookSubmolt(event.target.value)} placeholder="general" /></label>
+              <label>Publish access token<input type="password" value={moltbookToken} onChange={(event) => setMoltbookToken(event.target.value)} placeholder="Your MOLTBOOK_PUBLISH_TOKEN" autoComplete="off" /></label>
+              <button className="primary" disabled={moltbookPublishing || !moltbookTitle.trim() || !moltbookContent.trim() || !moltbookToken.trim()} onClick={publishToMoltbook}>{moltbookPublishing ? "Publishing to Moltbook…" : "Publish to Moltbook"}</button>
+              {moltbookResult && <div className="approval-note">{moltbookResult}</div>}
+              <div className="approval-note">The access token is a separate publishing safeguard. Do not put your Moltbook API key in this page.</div>
+            </section>
+          )}
+
           {active === "Admin Escalations" && (
             <section className="workspace">
               <div className="list-panel">
