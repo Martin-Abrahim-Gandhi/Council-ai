@@ -4,12 +4,37 @@ import { createMoltbookPost } from "@/lib/moltbook";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function POST(request: Request) {
-  const publishToken = process.env.MOLTBOOK_PUBLISH_TOKEN;
-  const providedToken = request.headers.get("x-moltbook-publish-token");
+const WINDOW_MS = 60_000;
+const MAX_REQUESTS_PER_WINDOW = 5;
+const requestLog = new Map<string, number[]>();
 
-  if (!publishToken || !providedToken || providedToken !== publishToken) {
-    return NextResponse.json({ error: "Moltbook publishing is not authorized." }, { status: 401 });
+function isRateLimited(ip: string) {
+  const now = Date.now();
+  const recent = (requestLog.get(ip) ?? []).filter((timestamp) => now - timestamp < WINDOW_MS);
+  if (recent.length >= MAX_REQUESTS_PER_WINDOW) {
+    requestLog.set(ip, recent);
+    return true;
+  }
+  recent.push(now);
+  requestLog.set(ip, recent);
+  if (requestLog.size > 1000) {
+    for (const [key, timestamps] of requestLog) {
+      if (timestamps.every((timestamp) => now - timestamp >= WINDOW_MS)) requestLog.delete(key);
+    }
+  }
+  return false;
+}
+
+export async function POST(request: Request) {
+  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+    ?? request.headers.get("x-real-ip")
+    ?? "unknown";
+
+  if (isRateLimited(ip)) {
+    return NextResponse.json(
+      { error: "Publishing is temporarily rate-limited. Please wait a minute and try again." },
+      { status: 429 },
+    );
   }
 
   try {
