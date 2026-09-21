@@ -388,7 +388,7 @@ function allGatesPass(gates: GateEvaluation) {
 
 async function createEscalation(
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
-  userId: string,
+  userId: string | null,
   decisionId: string,
   question: string,
   deliberations: VoiceResult[],
@@ -522,11 +522,11 @@ async function synthesizeWithRetry(
 async function getDecisionForParcel(
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
   decisionId: string,
-  userId: string,
+  userId: string | null,
 ) {
   const { data, error } = await supabase.from("council_decisions")
     .select("id,user_id,question,context,status,final_advice,action_type,action_payload")
-    .eq("id", decisionId).eq("user_id", userId).single();
+    .eq("id", decisionId).single();
   if (error || !data) throw new Error("Council decision not found.");
   return data;
 }
@@ -602,7 +602,7 @@ export async function runCouncilParcel(input: {
   decisionId?: string | null;
   question?: string;
   context?: string;
-  userId: string;
+  userId: string | null;
   conversationId?: string | null;
   publishTarget?: { kind: "post" | "comment"; postId?: string; commentId?: string };
 }): Promise<Omit<CouncilRunResult, "status"> & { status: CouncilRunResult["status"] | "deliberating"; stage: CouncilParcelStage; complete: boolean; decision_id: string }> {
@@ -683,7 +683,7 @@ export async function runCouncilParcel(input: {
 
     await supabase.from("council_decisions").update({
       action_payload: { ...payload, parcel_stage: input.stage },
-    }).eq("id", decision.id).eq("user_id", input.userId);
+    }).eq("id", decision.id);
 
     return {
       decision_id: decision.id,
@@ -755,7 +755,7 @@ export async function runCouncilParcel(input: {
       voice_support: synthesis.voice_support,
       escalation: !passed,
     },
-  }).eq("id", decision.id).eq("user_id", input.userId);
+  }).eq("id", decision.id);
 
   if (nextStatus === "consensus") {
     try {
@@ -786,7 +786,7 @@ export async function runCouncilParcel(input: {
 export async function runCouncil(input: {
   question: string;
   context?: string;
-  userId: string;
+  userId: string | null;
   conversationId?: string | null;
   publishTarget?: { kind: "post" | "comment"; postId?: string; commentId?: string };
 }): Promise<CouncilRunResult> {
@@ -867,7 +867,7 @@ export async function runCouncil(input: {
           ...(input.publishTarget?.commentId ? { moltbook_parent_comment_id: input.publishTarget.commentId } : {}),
         },
         principle_check: { preservation_of_life: synthesis.gate_evaluation.preservation_of_life, voices: synthesis.gate_evaluation, voice_support: synthesis.voice_support },
-      }).eq("id", decision.id).eq("user_id", input.userId);
+      }).eq("id", decision.id);
       try { await publishCouncilDecision({ decisionId: decision.id, userId: input.userId }); } catch (publishError) {
         console.warn("Council consensus is ready but Moltbook publication is pending:", publishError);
       }
@@ -884,7 +884,7 @@ export async function runCouncil(input: {
         status: "no_consensus",
         final_advice: null,
         principle_check: { preservation_of_life: synthesis.gate_evaluation.preservation_of_life, voices: synthesis.gate_evaluation, voice_support: synthesis.voice_support, escalation: false },
-      }).eq("id", decision.id).eq("user_id", input.userId);
+      }).eq("id", decision.id);
       return {
         decision_id: decision.id, status: "no_consensus", final_advice: null, deliberations,
         supreme_gate: synthesis.gate_evaluation.preservation_of_life,
@@ -900,7 +900,7 @@ export async function runCouncil(input: {
       action_type: "post",
       action_payload: { reply: synthesis.final_advice, ready_to_publish: false, escalation_id: escalationId },
       principle_check: { preservation_of_life: synthesis.gate_evaluation.preservation_of_life, voices: synthesis.gate_evaluation, voice_support: synthesis.voice_support, escalation: true },
-    }).eq("id", decision.id).eq("user_id", input.userId);
+    }).eq("id", decision.id);
     const failed = Object.entries(synthesis.gate_evaluation).filter(([, g]) => !g.passed).map(([gate, g]) => ({ gate, explanation: g.explanation }));
     return {
       decision_id: decision.id, status: "awaiting_admin", final_advice: synthesis.final_advice, deliberations,
@@ -915,17 +915,17 @@ export async function runCouncil(input: {
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
     });
-    await supabase.from("council_decisions").update({ status: "declined", final_advice: null }).eq("id", decision.id).eq("user_id", input.userId);
+    await supabase.from("council_decisions").update({ status: "declined", final_advice: null }).eq("id", decision.id);
     throw error;
   }
 }
 
-export async function resolveEscalation(input: { escalationId: string; userId: string; correction: string; guidance?: string }) {
+export async function resolveEscalation(input: { escalationId: string; userId: string | null; correction: string; guidance?: string }) {
   const correction = input.correction.trim();
   if (!correction) throw new Error("A corrected response is required.");
   const supabase = await createSupabaseServerClient();
   const { data: escalation, error } = await supabase.from("admin_escalations")
-    .select("id,decision_id,question,status").eq("id", input.escalationId).eq("user_id", input.userId).single();
+    .select("id,decision_id,question,status").eq("id", input.escalationId).single();
   if (error || !escalation) throw new Error("Escalation not found.");
   if (escalation.status === "resolved") throw new Error("Escalation is already resolved.");
 
@@ -970,7 +970,7 @@ ${input.guidance ?? ""}`));
     admin_correction: correction,
     admin_guidance: input.guidance ?? null,
     resolution: { gate_evaluation: review.gate_evaluation, voice_support: review.voice_support, ready_to_publish: true },
-  }).eq("id", input.escalationId).eq("user_id", input.userId);
+  }).eq("id", input.escalationId);
 
   await supabase.from("council_decisions").update({
     status: "consensus",
@@ -978,7 +978,7 @@ ${input.guidance ?? ""}`));
     action_type: "post",
     action_payload: { reply: correction, ready_to_publish: true, resolved_by_admin: true },
     principle_check: { preservation_of_life: review.gate_evaluation.preservation_of_life, voices: review.gate_evaluation, voice_support: review.voice_support, admin_corrected: true },
-  }).eq("id", escalation.decision_id).eq("user_id", input.userId);
+  }).eq("id", escalation.decision_id);
 
   let published = false;
   let publication_error: string | null = null;
