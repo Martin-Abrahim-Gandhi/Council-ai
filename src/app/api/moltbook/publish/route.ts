@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createMoltbookPost } from "@/lib/moltbook";
+import { createMoltbookPost, getMoltbookPost } from "@/lib/moltbook";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,8 +47,37 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Title and content are required." }, { status: 400 });
     }
 
-    const post = await createMoltbookPost({ title, content, submolt: submolt || undefined });
-    return NextResponse.json({ ok: true, post });
+    const result = await createMoltbookPost({ title, content, submolt: submolt || undefined });
+    const post = result?.post ?? result?.data?.post ?? result?.data ?? result;
+    const postId = post?.id ?? post?.post_id ?? result?.post_id ?? result?.data?.id;
+    const postUrl = post?.url ?? post?.permalink ?? result?.url ?? null;
+
+    if (!postId) {
+      console.error("[moltbook:publish] Moltbook returned no post id", { result });
+      return NextResponse.json(
+        { error: "Moltbook accepted the request but returned no post ID, so the post could not be verified." },
+        { status: 502 },
+      );
+    }
+
+    let verified = false;
+    let verificationError: string | null = null;
+    try {
+      const fetched = await getMoltbookPost(String(postId));
+      const fetchedPost = fetched?.post ?? fetched?.data?.post ?? fetched?.data ?? fetched;
+      verified = String(fetchedPost?.id ?? fetchedPost?.post_id ?? "") === String(postId);
+      if (!verified) verificationError = "Moltbook returned a different post record during verification.";
+    } catch (error) {
+      verificationError = error instanceof Error ? error.message : "Post verification failed.";
+      console.warn("[moltbook:publish] verification failed", { postId, verificationError });
+    }
+
+    return NextResponse.json({
+      ok: true,
+      post: { id: String(postId), url: postUrl },
+      verified,
+      verificationError,
+    });
   } catch (error) {
     console.error("[moltbook:publish] failed", error);
     return NextResponse.json(
