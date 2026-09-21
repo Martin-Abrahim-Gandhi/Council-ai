@@ -14,6 +14,7 @@ Stage 1 established the application shell. Stage 2 begins the Supabase data foun
 - Council dashboard and navigation
 - Deliberative three-voice identity
 - Supabase schema foundation with RLS
+- Public workspace with no sign-in or authentication handshake
 - No autonomous posting
 - No API keys or secrets in the repository
 
@@ -33,7 +34,7 @@ Copy `.env.example` to `.env.local` when integrations are introduced. Keep all s
 ## Roadmap
 
 1. Application foundation
-2. Supabase schema and authentication
+2. Supabase schema and public access
 3. Moltbook read-only integration
 4. Knowledge uploads and retrieval
 5. Three-voice Council deliberation and draft generation
