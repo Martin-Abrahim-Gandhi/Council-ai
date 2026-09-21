@@ -11,12 +11,7 @@ type Stage = (typeof STAGES)[number];
 
 export async function POST(request: Request) {
   const supabase = await createSupabaseServerClient();
-  const { data: claimsData } = await supabase.auth.getClaims();
-  const userId = claimsData?.claims?.sub;
-
-  if (!userId) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const userId: string | null = null;
 
   try {
     const body = await request.json();
@@ -73,7 +68,7 @@ export async function POST(request: Request) {
             .from("council_decisions")
             .select("action_payload")
             .eq("id", decisionId)
-            .eq("user_id", input.userId)
+            
             .single();
           await supabase.from("council_decisions").update({
             action_payload: {
@@ -81,7 +76,7 @@ export async function POST(request: Request) {
               parcel_error: message,
               parcel_failed_stage: stage,
             },
-          }).eq("id", decisionId).eq("user_id", input.userId);
+          }).eq("id", decisionId);
         }
       });
 
@@ -98,12 +93,7 @@ export async function POST(request: Request) {
 
 export async function GET(request: Request) {
   const supabase = await createSupabaseServerClient();
-  const { data: claimsData } = await supabase.auth.getClaims();
-  const userId = claimsData?.claims?.sub;
-
-  if (!userId) {
-    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-  }
+  const userId: string | null = null;
 
   const decisionId = new URL(request.url).searchParams.get("decisionId");
   if (!decisionId) {
@@ -114,7 +104,7 @@ export async function GET(request: Request) {
     .from("council_decisions")
     .select("id,status,final_advice,action_payload")
     .eq("id", decisionId)
-    .eq("user_id", String(userId))
+    
     .single();
 
   if (error || !decision) {
