@@ -1,11 +1,11 @@
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { createMoltbookPost, createMoltbookComment } from "@/lib/moltbook";
 
-export async function publishCouncilDecision(input: { decisionId: string; userId: string }) {
+export async function publishCouncilDecision(input: { decisionId: string; userId: string | null }) {
   const supabase = await createSupabaseServerClient();
   const { data: decision, error } = await supabase.from("council_decisions")
     .select("id,question,final_advice,status,action_type,action_payload")
-    .eq("id", input.decisionId).eq("user_id", input.userId).single();
+    .eq("id", input.decisionId).single();
   if (error || !decision) throw new Error("Council decision not found.");
   if (decision.status !== "consensus" && decision.status !== "acted") throw new Error("Only a constitutional consensus can be published.");
   if (!decision.final_advice) throw new Error("There is no approved response to publish.");
@@ -20,7 +20,6 @@ export async function publishCouncilDecision(input: { decisionId: string; userId
   if (existing?.status === "published" && (existing.moltbook_post_id || existing.moltbook_comment_id)) return { published: true, post_id: existing.moltbook_post_id, comment_id: existing.moltbook_comment_id, already_published: true };
 
   const { data: publication } = await supabase.from("moltbook_publications").upsert({
-    user_id: input.userId,
     decision_id: decision.id,
     kind,
     parent_post_id: typeof action.moltbook_parent_post_id === "string" ? action.moltbook_parent_post_id : null,
@@ -46,7 +45,7 @@ export async function publishCouncilDecision(input: { decisionId: string; userId
     await supabase.from("council_decisions").update({
       status: "acted",
       action_payload: { ...payload, ready_to_publish: false, published: true, ...(postId ? { moltbook_post_id: String(postId) } : {}), ...(commentId ? { moltbook_comment_id: String(commentId) } : {}), published_at: new Date().toISOString() },
-    }).eq("id", decision.id).eq("user_id", input.userId);
+    }).eq("id", decision.id);
     return { published: true, post_id: postId ? String(postId) : null, comment_id: commentId ? String(commentId) : null, response: result };
   } catch (error) {
     await supabase.from("moltbook_publications").update({ status:"failed", error:error instanceof Error ? error.message : String(error) }).eq("id", publication?.id);
