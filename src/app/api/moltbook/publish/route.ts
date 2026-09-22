@@ -41,42 +41,67 @@ export async function POST(request: Request) {
     const body = await request.json();
     const title = typeof body?.title === "string" ? body.title.trim() : "";
     const content = typeof body?.content === "string" ? body.content.trim() : "";
-    const submolt = typeof body?.submolt === "string" ? body.submolt.trim() : "";
+    const requestedSubmolts = Array.isArray(body?.submolts)
+      ? body.submolts.filter((value: unknown): value is string => typeof value === "string").map((value: string) => value.trim()).filter(Boolean)
+      : [];
+    const legacySubmolt = typeof body?.submolt === "string" ? body.submolt.trim() : "";
+    const submolts = [...new Set(requestedSubmolts.length ? requestedSubmolts : [legacySubmolt || process.env.MOLTBOOK_SUBMOLT || "general"])].slice(0, 5);
 
     if (!title || !content) {
       return NextResponse.json({ error: "Title and content are required." }, { status: 400 });
     }
 
-    const result = await createMoltbookPost({ title, content, submolt: submolt || undefined });
-    const post = result?.post ?? result?.data?.post ?? result?.data ?? result;
-    const postId = post?.id ?? post?.post_id ?? result?.post_id ?? result?.data?.id;
-    const postUrl = post?.url ?? post?.permalink ?? result?.url ?? null;
+    const results = [];
+    for (const submolt of submolts) {
+      try {
+        const result = await createMoltbookPost({ title, content, submolt });
+        const post = result?.post ?? result?.data?.post ?? result?.data ?? result;
+        const postId = post?.id ?? post?.post_id ?? result?.post_id ?? result?.data?.id;
+        const postUrl = post?.url ?? post?.permalink ?? result?.url ?? null;
 
-    if (!postId) {
-      console.error("[moltbook:publish] Moltbook returned no post id", { result });
-      return NextResponse.json(
-        { error: "Moltbook accepted the request but returned no post ID, so the post could not be verified." },
-        { status: 502 },
-      );
+        if (!postId) {
+          results.push({ submolt, ok: false, verified: false, error: "Moltbook returned no post ID." });
+          continue;
+        }
+
+        let verified = false;
+        let verificationError: string | null = null;
+        try {
+          const fetched = await getMoltbookPost(String(postId));
+          const fetchedPost = fetched?.post ?? fetched?.data?.post ?? fetched?.data ?? fetched;
+          verified = String(fetchedPost?.id ?? fetchedPost?.post_id ?? "") === String(postId);
+          if (!verified) verificationError = "Moltbook returned a different post record during verification.";
+        } catch (error) {
+          verificationError = error instanceof Error ? error.message : "Post verification failed.";
+        }
+
+        results.push({
+          submolt,
+          ok: true,
+          verified,
+          verificationError,
+          post: { id: String(postId), url: postUrl },
+        });
+      } catch (error) {
+        results.push({
+          submolt,
+          ok: false,
+          verified: false,
+          error: error instanceof Error ? error.message : "Moltbook publish failed.",
+        });
+      }
     }
 
-    let verified = false;
-    let verificationError: string | null = null;
-    try {
-      const fetched = await getMoltbookPost(String(postId));
-      const fetchedPost = fetched?.post ?? fetched?.data?.post ?? fetched?.data ?? fetched;
-      verified = String(fetchedPost?.id ?? fetchedPost?.post_id ?? "") === String(postId);
-      if (!verified) verificationError = "Moltbook returned a different post record during verification.";
-    } catch (error) {
-      verificationError = error instanceof Error ? error.message : "Post verification failed.";
-      console.warn("[moltbook:publish] verification failed", { postId, verificationError });
+    const successful = results.filter((item) => item.ok);
+    if (!successful.length) {
+      return NextResponse.json({ error: "Moltbook rejected every selected community.", results }, { status: 502 });
     }
 
     return NextResponse.json({
       ok: true,
-      post: { id: String(postId), url: postUrl },
-      verified,
-      verificationError,
+      results,
+      published_count: successful.length,
+      verified_count: successful.filter((item) => item.verified).length,
     });
   } catch (error) {
     console.error("[moltbook:publish] failed", error);
