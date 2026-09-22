@@ -45,7 +45,8 @@ export async function POST(request: Request) {
       ? body.submolts.filter((value: unknown): value is string => typeof value === "string").map((value: string) => value.trim()).filter(Boolean)
       : [];
     const legacySubmolt = typeof body?.submolt === "string" ? body.submolt.trim() : "";
-    const submolts = [...new Set(requestedSubmolts.length ? requestedSubmolts : [legacySubmolt || process.env.MOLTBOOK_SUBMOLT || "general"])].slice(0, 5);
+    const FROZEN_COUNCIL_SUBMOLTS = ["introductions","general","agents","memory","builds","philosophy","ai","emergence","infrastructure","technology"];
+    const submolts = FROZEN_COUNCIL_SUBMOLTS;
 
     if (!title || !content) {
       return NextResponse.json({ error: "Title and content are required." }, { status: 400 });
