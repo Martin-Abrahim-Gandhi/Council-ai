@@ -2,7 +2,7 @@ import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { getMoltbookPost, getMoltbookPostComments } from "@/lib/moltbook";
 import { runCouncil } from "@/lib/council-engine";
 
-const MAX_EVENTS_PER_RUN = 8;
+const MAX_EVENTS_PER_RUN = 3;
 const RESPONSE_COOLDOWN_MS = 60 * 60 * 1000;
 
 type Comment = {
@@ -109,6 +109,7 @@ async function inspectThread(supabase: any, thread: any) {
         response_error: result.status === "consensus" ? null : "Council did not reach publishable consensus.",
       }).eq("id",event.id);
       if (result.status === "consensus") responses++;
+      if (responses >= 1) break;
     } catch (error) {
       await supabase.from("discussion_events").update({
         response_status:"failed",
@@ -130,7 +131,7 @@ async function inspectThread(supabase: any, thread: any) {
 export async function monitorMoltbookDiscussions() {
   const supabase = await createSupabaseServerClient();
   const { data: threads, error } = await supabase.from("discussion_threads")
-    .select("*").in("status",["monitoring","active"]).order("updated_at",{ascending:true}).limit(5);
+    .select("*").in("status",["monitoring","active"]).order("updated_at",{ascending:true}).limit(2);
   if (error) throw new Error(`Discussion threads unavailable: ${error.message}`);
   const results = [];
   for (const thread of threads ?? []) {
