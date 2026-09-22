@@ -6,7 +6,7 @@ function key() {
   return value;
 }
 
-async function moltbookFetch(path: string, init: RequestInit = {}) {
+export async function moltbookFetch(path: string, init: RequestInit = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
 
