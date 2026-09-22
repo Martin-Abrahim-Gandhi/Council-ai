@@ -28,7 +28,11 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
   const [resolving, setResolving] = useState(false);
   const [moltbookTitle, setMoltbookTitle] = useState("");
   const [moltbookContent, setMoltbookContent] = useState("");
-  const [moltbookSubmolt, setMoltbookSubmolt] = useState("general");
+  const [moltbookSubmolts, setMoltbookSubmolts] = useState<string[]>(["general"]);
+  const [moltbookCommunityQuery, setMoltbookCommunityQuery] = useState("");
+  const [moltbookCommunities, setMoltbookCommunities] = useState<Array<{ name: string; display_name?: string; description?: string; subscriber_count?: number }>>([]);
+  const [moltbookCommunitiesLoading, setMoltbookCommunitiesLoading] = useState(false);
+  const [moltbookCommunitiesError, setMoltbookCommunitiesError] = useState<string | null>(null);
   const [moltbookPublishing, setMoltbookPublishing] = useState(false);
   const [moltbookResult, setMoltbookResult] = useState<string | null>(null);
   const latest = data.decisions[0];
@@ -184,6 +188,22 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
     }
   }
 
+  async function loadMoltbookCommunities() {
+    if (moltbookCommunitiesLoading || moltbookCommunities.length) return;
+    setMoltbookCommunitiesLoading(true);
+    setMoltbookCommunitiesError(null);
+    try {
+      const response = await fetch("/api/moltbook/submolts", { cache: "no-store" });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error ?? "Could not load Moltbook communities.");
+      setMoltbookCommunities(payload.submolts ?? []);
+    } catch (err) {
+      setMoltbookCommunitiesError(err instanceof Error ? err.message : "Could not load Moltbook communities.");
+    } finally {
+      setMoltbookCommunitiesLoading(false);
+    }
+  }
+
   async function publishToMoltbook() {
     if (!moltbookTitle.trim() || !moltbookContent.trim() || moltbookPublishing) return;
     setMoltbookPublishing(true);
@@ -198,13 +218,16 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
         body: JSON.stringify({
           title: moltbookTitle,
           content: moltbookContent,
-          submolt: moltbookSubmolt,
+          submolts: moltbookSubmolts,
         }),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error ?? "Could not publish to Moltbook.");
-      const url = payload.post?.url ?? payload.url;
-      setMoltbookResult(url ? `Published successfully. ${url}` : "Published successfully to Moltbook.");
+      const verified = payload.verified_count ?? 0;
+      const published = payload.published_count ?? 0;
+      const failed = (payload.results ?? []).filter((item: any) => !item.ok);
+      const links = (payload.results ?? []).filter((item: any) => item.ok && item.post?.url).map((item: any) => `${item.submolt}: ${item.post.url}`);
+      setMoltbookResult(`Published to ${published} community${published === 1 ? "" : "ies"} · ${verified} verified${failed.length ? ` · ${failed.length} failed` : ""}${links.length ? ` · ${links.join(" · ")}` : ""}`);
     } catch (err) {
       setMoltbookResult(err instanceof Error ? err.message : "Could not publish to Moltbook.");
     } finally {
@@ -367,16 +390,55 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
             </section>
           )}
           {active === "Moltbook Publisher" && (
-            <section className="composer panel">
-              <span className="section-kicker">MOLTBOOK / PUBLISH</span>
-              <h2>Publish as Council AI.</h2>
-              <p className="thread-intro">Write the heading and content here. The server keeps the Moltbook API key private and submits the post as MAG3-Council_ai.</p>
-              <label>Heading<input value={moltbookTitle} onChange={(event) => setMoltbookTitle(event.target.value)} maxLength={300} placeholder="Post title..." /></label>
-              <label>Content<textarea value={moltbookContent} onChange={(event) => setMoltbookContent(event.target.value)} rows={16} maxLength={40000} placeholder="Write the Council's post..." /></label>
-              <label>Submolt<input value={moltbookSubmolt} onChange={(event) => setMoltbookSubmolt(event.target.value)} placeholder="general" /></label>
-              <button className="primary" disabled={moltbookPublishing || !moltbookTitle.trim() || !moltbookContent.trim()} onClick={publishToMoltbook}>{moltbookPublishing ? "Publishing to Moltbook…" : "Publish to Moltbook"}</button>
-              {moltbookResult && <div className="approval-note">{moltbookResult}</div>}
-              <div className="approval-note">The Moltbook API key stays on the server. This page never asks you to enter it.</div>
+            <section className="moltbook-publisher">
+              <div className="publisher-hero">
+                <div>
+                  <span className="section-kicker">MOLTBOOK / COUNCIL BROADCAST</span>
+                  <h2>Start a conversation, not just a post.</h2>
+                  <p>Choose the communities where this question belongs. Council AI will publish the same discussion to each selected Moltbook community and verify every returned post.</p>
+                </div>
+                <div className="publisher-stat"><strong>{moltbookSubmolts.length}</strong><span>communities selected</span></div>
+              </div>
+
+              <div className="publisher-grid">
+                <section className="panel publisher-compose">
+                  <div className="panel-heading"><div><span className="section-kicker">COMPOSE</span><h3>Council AI post</h3></div><span className="muted">MAG3-Council_ai</span></div>
+                  <label>Heading<input value={moltbookTitle} onChange={(event) => setMoltbookTitle(event.target.value)} maxLength={300} placeholder="Ask something agents can answer..." /></label>
+                  <label>Content<textarea value={moltbookContent} onChange={(event) => setMoltbookContent(event.target.value)} rows={17} maxLength={40000} placeholder="State the question, your current view, and what you want other agents to challenge or contribute." /></label>
+                  <div className="discussion-checklist">
+                    <span>DISCUSSION READY</span>
+                    <div><b>1</b> Specific question</div><div><b>2</b> Something to challenge</div><div><b>3</b> Clear invitation to respond</div>
+                  </div>
+                </section>
+
+                <section className="panel community-picker" onFocus={loadMoltbookCommunities}>
+                  <div className="panel-heading"><div><span className="section-kicker">DESTINATIONS</span><h3>Select communities</h3></div><button className="text-link" onClick={() => setMoltbookSubmolts(moltbookCommunities.map((item) => item.name).slice(0,5))}>Select all</button></div>
+                  <input className="community-search" value={moltbookCommunityQuery} onChange={(event) => setMoltbookCommunityQuery(event.target.value)} placeholder="Search communities..." onFocus={loadMoltbookCommunities} />
+                  <div className="community-meta">{moltbookCommunitiesLoading ? "Loading Moltbook communities…" : `${moltbookCommunities.length} communities available`}</div>
+                  {moltbookCommunitiesError && <div className="approval-note">{moltbookCommunitiesError}</div>}
+                  <div className="community-list">
+                    {moltbookCommunities.filter((item) => {
+                      const q = moltbookCommunityQuery.trim().toLowerCase();
+                      return !q || item.name.toLowerCase().includes(q) || (item.display_name ?? "").toLowerCase().includes(q) || (item.description ?? "").toLowerCase().includes(q);
+                    }).slice(0,40).map((item) => {
+                      const selected = moltbookSubmolts.includes(item.name);
+                      return <button type="button" className={`community-option ${selected ? "selected" : ""}`} key={item.name} onClick={() => setMoltbookSubmolts((current) => selected ? current.filter((name) => name !== item.name) : current.length >= 5 ? current : [...current, item.name])}>
+                        <span className="community-toggle">{selected ? "✓" : ""}</span>
+                        <span><strong>m/{item.name}</strong><small>{item.display_name ?? item.description ?? "Moltbook community"}{item.subscriber_count ? ` · ${item.subscriber_count.toLocaleString()} members` : ""}</small></span>
+                      </button>;
+                    })}
+                  </div>
+                  {!moltbookCommunitiesLoading && !moltbookCommunities.length && !moltbookCommunitiesError && <div className="empty-state-inline">Focus the search box to load the current Moltbook directory.</div>}
+                  <div className="selected-strip">{moltbookSubmolts.map((name) => <span key={name}>m/{name}</span>)}</div>
+                </section>
+              </div>
+
+              <div className="publisher-footer">
+                <div><span className="section-kicker">PUBLISH PLAN</span><strong>{moltbookSubmolts.length ? `Post to m/${moltbookSubmolts.join(", m/")}` : "Select at least one community"}</strong></div>
+                <button className="primary" disabled={moltbookPublishing || !moltbookTitle.trim() || !moltbookContent.trim() || !moltbookSubmolts.length} onClick={publishToMoltbook}>{moltbookPublishing ? "Publishing & verifying…" : `Publish to ${moltbookSubmolts.length} communit${moltbookSubmolts.length === 1 ? "y" : "ies"}`}</button>
+              </div>
+              {moltbookResult && <div className="approval-note publisher-result">{moltbookResult}</div>}
+              <div className="approval-note">The Moltbook API key stays on the server. Up to five communities can be selected per publish. Each post is verified after creation.</div>
             </section>
           )}
 
