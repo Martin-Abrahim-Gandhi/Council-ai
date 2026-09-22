@@ -28,8 +28,8 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
   const [resolving, setResolving] = useState(false);
   const [moltbookTitle, setMoltbookTitle] = useState("");
   const [moltbookContent, setMoltbookContent] = useState("");
-  const FROZEN_COUNCIL_SUBMOLTS = ["philosophy"];
-  const [moltbookSubmolts, setMoltbookSubmolts] = useState<string[]>(FROZEN_COUNCIL_SUBMOLTS);
+  const COUNCIL_SUBMOLTS = ["philosophy", "agents", "general", "openclaw-explorers", "qa"];
+  const [moltbookSubmolt, setMoltbookSubmolt] = useState<string>("philosophy");
   const [moltbookCommunityQuery, setMoltbookCommunityQuery] = useState("");
   const [moltbookCommunities, setMoltbookCommunities] = useState<Array<{ name: string; display_name?: string; description?: string; subscriber_count?: number }>>([]);
   const [moltbookCommunitiesLoading, setMoltbookCommunitiesLoading] = useState(false);
@@ -219,7 +219,7 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
         body: JSON.stringify({
           title: moltbookTitle,
           content: moltbookContent,
-          submolts: moltbookSubmolts,
+          submolts: [moltbookSubmolt],
         }),
       });
       const payload = await response.json().catch(() => ({}));
@@ -396,9 +396,9 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
                 <div>
                   <span className="section-kicker">MOLTBOOK / COUNCIL BROADCAST</span>
                   <h2>Start a conversation, not just a post.</h2>
-                  <p>Council AI publishes Council discussions to the fixed m/philosophy community and verifies the returned post.</p>
+                  <p>Choose one relevant Moltbook community for each Council discussion. The publisher sends one post to one destination and verifies the returned post.</p>
                 </div>
-                <div className="publisher-stat"><strong>1</strong><span>fixed community</span></div>
+                <div className="publisher-stat"><strong>5</strong><span>available destinations</span></div>
               </div>
 
               <div className="publisher-grid">
@@ -413,12 +413,12 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
                 </section>
 
                 <section className="panel community-picker" onFocus={loadMoltbookCommunities}>
-                  <div className="panel-heading"><div><span className="section-kicker">DESTINATIONS</span><h3>Fixed Council destination</h3></div><span className="muted">m/philosophy</span></div>
+                  <div className="panel-heading"><div><span className="section-kicker">DESTINATIONS</span><h3>Choose one destination</h3></div><span className="muted">1 post only</span></div>
                   <input className="community-search" value={moltbookCommunityQuery} onChange={(event) => setMoltbookCommunityQuery(event.target.value)} placeholder="Search communities..." onFocus={loadMoltbookCommunities} />
                   <div className="community-meta">{moltbookCommunitiesLoading ? "Loading Moltbook communities…" : `${moltbookCommunities.length} communities available`}</div>
                   {moltbookCommunitiesError && <div className="approval-note">{moltbookCommunitiesError}</div>}
                   <div className="community-list">
-                    {moltbookCommunities.filter((item) => FROZEN_COUNCIL_SUBMOLTS.includes(item.name)).sort((a,b) => FROZEN_COUNCIL_SUBMOLTS.indexOf(a.name)-FROZEN_COUNCIL_SUBMOLTS.indexOf(b.name)).filter((item) => {
+                    {moltbookCommunities.filter((item) => COUNCIL_SUBMOLTS.includes(item.name)).sort((a,b) => COUNCIL_SUBMOLTS.indexOf(a.name)-COUNCIL_SUBMOLTS.indexOf(b.name)).filter((item) => {
                       const q = moltbookCommunityQuery.trim().toLowerCase();
                       return !q || item.name.toLowerCase().includes(q) || (item.display_name ?? "").toLowerCase().includes(q) || (item.description ?? "").toLowerCase().includes(q);
                     }).slice(0,40).map((item) => {
@@ -430,7 +430,7 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
                     })}
                   </div>
                   {!moltbookCommunitiesLoading && !moltbookCommunities.length && !moltbookCommunitiesError && <div className="empty-state-inline">Focus the search box to load the current Moltbook directory.</div>}
-                  <div className="selected-strip">{moltbookSubmolts.map((name) => <span key={name}>m/{name}</span>)}</div>
+                  <div className="selected-strip"><span>Selected: m/{moltbookSubmolt}</span></div>
                 </section>
               </div>
 
@@ -439,7 +439,7 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
                 <button className="primary" disabled={moltbookPublishing || !moltbookTitle.trim() || !moltbookContent.trim()} onClick={publishToMoltbook}>{moltbookPublishing ? "Publishing & verifying…" : "Publish to m/philosophy"}</button>
               </div>
               {moltbookResult && <div className="approval-note publisher-result">{moltbookResult}</div>}
-              <div className="approval-note">The Moltbook API key stays on the server. The Council destination is fixed to m/philosophy. Every post is verified after creation.</div>
+              <div className="approval-note">The Moltbook API key stays on the server. Choose exactly one of the five Council destinations; there is no cross-posting. Every post is verified after creation.</div>
             </section>
           )}
 
