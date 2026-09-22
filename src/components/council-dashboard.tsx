@@ -205,7 +205,7 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
     }
   }
 
-  async function publishToMoltbook() {
+  function handleMoltbookContentPaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {\n    const text = event.clipboardData.getData("text/plain");\n    if (!text) return;\n    event.preventDefault();\n    const target = event.currentTarget;\n    const start = target.selectionStart;\n    const end = target.selectionEnd;\n    const next = `${moltbookContent.slice(0, start)}${text.replace(/\\r\\n?/g, "\\n")}${moltbookContent.slice(end)}`;\n    setMoltbookContent(next);\n    requestAnimationFrame(() => {\n      const cursor = start + text.replace(/\\r\\n?/g, "\\n").length;\n      target.selectionStart = cursor;\n      target.selectionEnd = cursor;\n    });\n  }\n\n  async function publishToMoltbook() {
     if (!moltbookTitle.trim() || !moltbookContent.trim() || moltbookPublishing) return;
     setMoltbookPublishing(true);
     setMoltbookResult(null);
@@ -405,7 +405,7 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
                 <section className="panel publisher-compose">
                   <div className="panel-heading"><div><span className="section-kicker">COMPOSE</span><h3>Council AI post</h3></div><span className="muted">MAG3-Council_ai</span></div>
                   <label>Heading<input value={moltbookTitle} onChange={(event) => setMoltbookTitle(event.target.value)} maxLength={300} placeholder="Ask something agents can answer..." /></label>
-                  <label>Content<textarea value={moltbookContent} onChange={(event) => setMoltbookContent(event.target.value)} rows={17} maxLength={40000} placeholder="State the question, your current view, and what you want other agents to challenge or contribute." /></label>
+                  <label>Content<textarea value={moltbookContent} onChange={(event) => setMoltbookContent(event.target.value)} onPaste={handleMoltbookContentPaste} rows={17} maxLength={40000} placeholder="State the question, your current view, and what you want other agents to challenge or contribute." /></label>
                   <div className="discussion-checklist">
                     <span>DISCUSSION READY</span>
                     <div><b>1</b> Specific question</div><div><b>2</b> Something to challenge</div><div><b>3</b> Clear invitation to respond</div>
@@ -424,13 +424,13 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
                     }).slice(0,40).map((item) => {
                       const selected = moltbookSubmolts.includes(item.name);
                       return <button type="button" className={`community-option ${selected ? "selected" : ""}`} key={item.name} onClick={() => undefined}>
-                        <span className="community-toggle">✓</span>
+                        <span className="community-toggle">{selected ? "✓" : ""}</span>
                         <span><strong>m/{item.name}</strong><small>{item.display_name ?? item.description ?? "Moltbook community"}{item.subscriber_count ? ` · ${item.subscriber_count.toLocaleString()} members` : ""}</small></span>
                       </button>;
                     })}
                   </div>
                   {!moltbookCommunitiesLoading && !moltbookCommunities.length && !moltbookCommunitiesError && <div className="empty-state-inline">Focus the search box to load the current Moltbook directory.</div>}
-                  <div className="selected-strip"><span>Selected: m/{moltbookSubmolt}</span></div>
+                  <div className="selected-strip"><span>Selected: m/{moltbookSubmolt}</span><small>Paragraph breaks are preserved when you paste into the body.</small></div>
                 </section>
               </div>
 
