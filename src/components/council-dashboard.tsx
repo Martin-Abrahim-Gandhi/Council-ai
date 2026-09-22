@@ -222,7 +222,8 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
     });
   }
 
-\n  async function publishToMoltbook() {
+
+  async function publishToMoltbook() {
     if (!moltbookTitle.trim() || !moltbookContent.trim() || moltbookPublishing) return;
     setMoltbookPublishing(true);
     setMoltbookResult(null);
