@@ -8,6 +8,7 @@ export const dynamic = "force-dynamic";
 const WINDOW_MS = 60_000;
 const MAX_REQUESTS_PER_WINDOW = 5;
 const requestLog = new Map<string, number[]>();
+const COUNCIL_SUBMOLTS = ["philosophy", "agents", "general", "openclaw-explorers", "qa"] as const;
 
 function isRateLimited(ip: string) {
   const now = Date.now();
@@ -46,26 +47,30 @@ export async function POST(request: Request) {
       ? body.submolts.filter((value: unknown): value is string => typeof value === "string").map((value: string) => value.trim()).filter(Boolean)
       : [];
     const legacySubmolt = typeof body?.submolt === "string" ? body.submolt.trim() : "";
-    const FROZEN_COUNCIL_SUBMOLTS = ["philosophy"];
-    const submolts = FROZEN_COUNCIL_SUBMOLTS;
 
     if (!title || !content) {
       return NextResponse.json({ error: "Title and content are required." }, { status: 400 });
     }
 
+    const submolts = requestedSubmolts.length ? requestedSubmolts : legacySubmolt ? [legacySubmolt] : [];
+    if (submolts.length !== 1 || !COUNCIL_SUBMOLTS.includes(submolts[0] as typeof COUNCIL_SUBMOLTS[number])) {
+      return NextResponse.json(
+        { error: "Choose exactly one Council destination: m/philosophy, m/agents, m/general, m/openclaw-explorers, or m/qa." },
+        { status: 400 },
+      );
+    }
+
+    const submolt = submolts[0];
     const results = [];
-    for (const submolt of submolts) {
-      try {
-        const result = await createMoltbookPost({ title, content, submolt });
-        const post = result?.post ?? result?.data?.post ?? result?.data ?? result;
-        const postId = post?.id ?? post?.post_id ?? result?.post_id ?? result?.data?.id;
-        const postUrl = post?.url ?? post?.permalink ?? result?.url ?? null;
+    try {
+      const result = await createMoltbookPost({ title, content, submolt });
+      const post = result?.post ?? result?.data?.post ?? result?.data ?? result;
+      const postId = post?.id ?? post?.post_id ?? result?.post_id ?? result?.data?.id;
+      const postUrl = post?.url ?? post?.permalink ?? result?.url ?? null;
 
-        if (!postId) {
-          results.push({ submolt, ok: false, verified: false, error: "Moltbook returned no post ID." });
-          continue;
-        }
-
+      if (!postId) {
+        results.push({ submolt, ok: false, verified: false, error: "Moltbook returned no post ID." });
+      } else {
         let verified = false;
         let verificationError: string | null = null;
         try {
@@ -95,19 +100,19 @@ export async function POST(request: Request) {
           verificationError,
           post: { id: String(postId), url: postUrl },
         });
-      } catch (error) {
-        results.push({
-          submolt,
-          ok: false,
-          verified: false,
-          error: error instanceof Error ? error.message : "Moltbook publish failed.",
-        });
       }
+    } catch (error) {
+      results.push({
+        submolt,
+        ok: false,
+        verified: false,
+        error: error instanceof Error ? error.message : "Moltbook publish failed.",
+      });
     }
 
     const successful = results.filter((item) => item.ok);
     if (!successful.length) {
-      return NextResponse.json({ error: "Moltbook rejected every selected community.", results }, { status: 502 });
+      return NextResponse.json({ error: "Moltbook rejected the selected community.", results }, { status: 502 });
     }
 
     return NextResponse.json({
