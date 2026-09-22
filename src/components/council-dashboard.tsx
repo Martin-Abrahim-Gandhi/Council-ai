@@ -205,7 +205,24 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
     }
   }
 
-  function handleMoltbookContentPaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {\n    const text = event.clipboardData.getData("text/plain");\n    if (!text) return;\n    event.preventDefault();\n    const target = event.currentTarget;\n    const start = target.selectionStart;\n    const end = target.selectionEnd;\n    const next = `${moltbookContent.slice(0, start)}${text.replace(/\\r\\n?/g, "\\n")}${moltbookContent.slice(end)}`;\n    setMoltbookContent(next);\n    requestAnimationFrame(() => {\n      const cursor = start + text.replace(/\\r\\n?/g, "\\n").length;\n      target.selectionStart = cursor;\n      target.selectionEnd = cursor;\n    });\n  }\n\n  async function publishToMoltbook() {
+  function handleMoltbookContentPaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const text = event.clipboardData.getData("text/plain");
+    if (!text) return;
+    event.preventDefault();
+    const target = event.currentTarget;
+    const start = target.selectionStart;
+    const end = target.selectionEnd;
+    const normalized = text.replace(/\r\n?/g, "\n");
+    const next = `${moltbookContent.slice(0, start)}${normalized}${moltbookContent.slice(end)}`;
+    setMoltbookContent(next);
+    requestAnimationFrame(() => {
+      const cursor = start + normalized.length;
+      target.selectionStart = cursor;
+      target.selectionEnd = cursor;
+    });
+  }
+
+\n  async function publishToMoltbook() {
     if (!moltbookTitle.trim() || !moltbookContent.trim() || moltbookPublishing) return;
     setMoltbookPublishing(true);
     setMoltbookResult(null);
@@ -422,8 +439,8 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
                       const q = moltbookCommunityQuery.trim().toLowerCase();
                       return !q || item.name.toLowerCase().includes(q) || (item.display_name ?? "").toLowerCase().includes(q) || (item.description ?? "").toLowerCase().includes(q);
                     }).slice(0,40).map((item) => {
-                      const selected = moltbookSubmolts.includes(item.name);
-                      return <button type="button" className={`community-option ${selected ? "selected" : ""}`} key={item.name} onClick={() => undefined}>
+                      const selected = moltbookSubmolt === item.name;
+                      return <button type="button" className={`community-option ${selected ? "selected" : ""}`} key={item.name} onClick={() => setMoltbookSubmolt(item.name)}>
                         <span className="community-toggle">{selected ? "✓" : ""}</span>
                         <span><strong>m/{item.name}</strong><small>{item.display_name ?? item.description ?? "Moltbook community"}{item.subscriber_count ? ` · ${item.subscriber_count.toLocaleString()} members` : ""}</small></span>
                       </button>;
@@ -435,8 +452,8 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
               </div>
 
               <div className="publisher-footer">
-                <div><span className="section-kicker">PUBLISH PLAN</span><strong>Every post → m/philosophy</strong></div>
-                <button className="primary" disabled={moltbookPublishing || !moltbookTitle.trim() || !moltbookContent.trim()} onClick={publishToMoltbook}>{moltbookPublishing ? "Publishing & verifying…" : "Publish to m/philosophy"}</button>
+                <div><span className="section-kicker">PUBLISH PLAN</span><strong>This post → m/{moltbookSubmolt}</strong></div>
+                <button className="primary" disabled={moltbookPublishing || !moltbookTitle.trim() || !moltbookContent.trim()} onClick={publishToMoltbook}>{moltbookPublishing ? "Publishing & verifying…" : `Publish to m/${moltbookSubmolt}`}</button>
               </div>
               {moltbookResult && <div className="approval-note publisher-result">{moltbookResult}</div>}
               <div className="approval-note">The Moltbook API key stays on the server. Choose exactly one of the five Council destinations; there is no cross-posting. Every post is verified after creation.</div>
