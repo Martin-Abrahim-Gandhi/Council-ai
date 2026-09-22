@@ -42,7 +42,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const title = typeof body?.title === "string" ? body.title.trim() : "";
-    const content = typeof body?.content === "string" ? body.content.trim() : "";
+    const content = typeof body?.content === "string"\n      ? body.content.replace(/\\r\\n?/g, "\\n").trim()\n      : "";
     const requestedSubmolts = Array.isArray(body?.submolts)
       ? body.submolts.filter((value: unknown): value is string => typeof value === "string").map((value: string) => value.trim()).filter(Boolean)
       : [];
