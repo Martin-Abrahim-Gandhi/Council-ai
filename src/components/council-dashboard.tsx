@@ -28,7 +28,7 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
   const [resolving, setResolving] = useState(false);
   const [moltbookTitle, setMoltbookTitle] = useState("");
   const [moltbookContent, setMoltbookContent] = useState("");
-  const FROZEN_COUNCIL_SUBMOLTS = ["introductions","general","agents","memory","builds","philosophy","ai","emergence","infrastructure","technology"];
+  const FROZEN_COUNCIL_SUBMOLTS = ["philosophy"];
   const [moltbookSubmolts, setMoltbookSubmolts] = useState<string[]>(FROZEN_COUNCIL_SUBMOLTS);
   const [moltbookCommunityQuery, setMoltbookCommunityQuery] = useState("");
   const [moltbookCommunities, setMoltbookCommunities] = useState<Array<{ name: string; display_name?: string; description?: string; subscriber_count?: number }>>([]);
@@ -396,9 +396,9 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
                 <div>
                   <span className="section-kicker">MOLTBOOK / COUNCIL BROADCAST</span>
                   <h2>Start a conversation, not just a post.</h2>
-                  <p>Choose the communities where this question belongs. Council AI will publish the same discussion to each selected Moltbook community and verify every returned post.</p>
+                  <p>Council AI publishes Council discussions to the fixed m/philosophy community and verifies the returned post.</p>
                 </div>
-                <div className="publisher-stat"><strong>10</strong><span>fixed communities</span></div>
+                <div className="publisher-stat"><strong>1</strong><span>fixed community</span></div>
               </div>
 
               <div className="publisher-grid">
@@ -413,7 +413,7 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
                 </section>
 
                 <section className="panel community-picker" onFocus={loadMoltbookCommunities}>
-                  <div className="panel-heading"><div><span className="section-kicker">DESTINATIONS</span><h3>Frozen Council network</h3></div><span className="muted">10 fixed</span></div>
+                  <div className="panel-heading"><div><span className="section-kicker">DESTINATIONS</span><h3>Fixed Council destination</h3></div><span className="muted">m/philosophy</span></div>
                   <input className="community-search" value={moltbookCommunityQuery} onChange={(event) => setMoltbookCommunityQuery(event.target.value)} placeholder="Search communities..." onFocus={loadMoltbookCommunities} />
                   <div className="community-meta">{moltbookCommunitiesLoading ? "Loading Moltbook communities…" : `${moltbookCommunities.length} communities available`}</div>
                   {moltbookCommunitiesError && <div className="approval-note">{moltbookCommunitiesError}</div>}
@@ -435,11 +435,11 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
               </div>
 
               <div className="publisher-footer">
-                <div><span className="section-kicker">PUBLISH PLAN</span><strong>Every post → 10 fixed Moltbook communities</strong></div>
-                <button className="primary" disabled={moltbookPublishing || !moltbookTitle.trim() || !moltbookContent.trim()} onClick={publishToMoltbook}>{moltbookPublishing ? "Publishing & verifying…" : "Broadcast to all 10 communities"}</button>
+                <div><span className="section-kicker">PUBLISH PLAN</span><strong>Every post → m/philosophy</strong></div>
+                <button className="primary" disabled={moltbookPublishing || !moltbookTitle.trim() || !moltbookContent.trim()} onClick={publishToMoltbook}>{moltbookPublishing ? "Publishing & verifying…" : "Publish to m/philosophy"}</button>
               </div>
               {moltbookResult && <div className="approval-note publisher-result">{moltbookResult}</div>}
-              <div className="approval-note">The Moltbook API key stays on the server. The ten communities are frozen for now and every post is verified after creation.</div>
+              <div className="approval-note">The Moltbook API key stays on the server. The Council destination is fixed to m/philosophy. Every post is verified after creation.</div>
             </section>
           )}
 
