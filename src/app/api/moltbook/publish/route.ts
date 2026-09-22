@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createMoltbookPost, getMoltbookPost } from "@/lib/moltbook";
+import { registerDiscussionThread } from "@/lib/discussion-engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -74,6 +75,17 @@ export async function POST(request: Request) {
           if (!verified) verificationError = "Moltbook returned a different post record during verification.";
         } catch (error) {
           verificationError = error instanceof Error ? error.message : "Post verification failed.";
+        }
+
+        try {
+          await registerDiscussionThread({
+            rootPostId: String(postId),
+            rootPostUrl: postUrl,
+            community: submolt,
+            title,
+          });
+        } catch (threadError) {
+          console.warn("[moltbook:publish] discussion thread registration failed", threadError);
         }
 
         results.push({
