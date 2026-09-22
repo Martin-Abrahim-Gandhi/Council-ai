@@ -28,7 +28,8 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
   const [resolving, setResolving] = useState(false);
   const [moltbookTitle, setMoltbookTitle] = useState("");
   const [moltbookContent, setMoltbookContent] = useState("");
-  const [moltbookSubmolts, setMoltbookSubmolts] = useState<string[]>(["general"]);
+  const FROZEN_COUNCIL_SUBMOLTS = ["introductions","general","agents","memory","builds","philosophy","ai","emergence","infrastructure","technology"];
+  const [moltbookSubmolts, setMoltbookSubmolts] = useState<string[]>(FROZEN_COUNCIL_SUBMOLTS);
   const [moltbookCommunityQuery, setMoltbookCommunityQuery] = useState("");
   const [moltbookCommunities, setMoltbookCommunities] = useState<Array<{ name: string; display_name?: string; description?: string; subscriber_count?: number }>>([]);
   const [moltbookCommunitiesLoading, setMoltbookCommunitiesLoading] = useState(false);
@@ -397,7 +398,7 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
                   <h2>Start a conversation, not just a post.</h2>
                   <p>Choose the communities where this question belongs. Council AI will publish the same discussion to each selected Moltbook community and verify every returned post.</p>
                 </div>
-                <div className="publisher-stat"><strong>{moltbookSubmolts.length}</strong><span>communities selected</span></div>
+                <div className="publisher-stat"><strong>10</strong><span>fixed communities</span></div>
               </div>
 
               <div className="publisher-grid">
@@ -412,18 +413,18 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
                 </section>
 
                 <section className="panel community-picker" onFocus={loadMoltbookCommunities}>
-                  <div className="panel-heading"><div><span className="section-kicker">DESTINATIONS</span><h3>Select communities</h3></div><button className="text-link" onClick={() => setMoltbookSubmolts(moltbookCommunities.map((item) => item.name).slice(0,5))}>Select all</button></div>
+                  <div className="panel-heading"><div><span className="section-kicker">DESTINATIONS</span><h3>Frozen Council network</h3></div><span className="muted">10 fixed</span></div>
                   <input className="community-search" value={moltbookCommunityQuery} onChange={(event) => setMoltbookCommunityQuery(event.target.value)} placeholder="Search communities..." onFocus={loadMoltbookCommunities} />
                   <div className="community-meta">{moltbookCommunitiesLoading ? "Loading Moltbook communities…" : `${moltbookCommunities.length} communities available`}</div>
                   {moltbookCommunitiesError && <div className="approval-note">{moltbookCommunitiesError}</div>}
                   <div className="community-list">
-                    {moltbookCommunities.filter((item) => {
+                    {moltbookCommunities.filter((item) => FROZEN_COUNCIL_SUBMOLTS.includes(item.name)).sort((a,b) => FROZEN_COUNCIL_SUBMOLTS.indexOf(a.name)-FROZEN_COUNCIL_SUBMOLTS.indexOf(b.name)).filter((item) => {
                       const q = moltbookCommunityQuery.trim().toLowerCase();
                       return !q || item.name.toLowerCase().includes(q) || (item.display_name ?? "").toLowerCase().includes(q) || (item.description ?? "").toLowerCase().includes(q);
                     }).slice(0,40).map((item) => {
                       const selected = moltbookSubmolts.includes(item.name);
-                      return <button type="button" className={`community-option ${selected ? "selected" : ""}`} key={item.name} onClick={() => setMoltbookSubmolts((current) => selected ? current.filter((name) => name !== item.name) : current.length >= 5 ? current : [...current, item.name])}>
-                        <span className="community-toggle">{selected ? "✓" : ""}</span>
+                      return <button type="button" className={`community-option ${selected ? "selected" : ""}`} key={item.name} onClick={() => undefined}>
+                        <span className="community-toggle">✓</span>
                         <span><strong>m/{item.name}</strong><small>{item.display_name ?? item.description ?? "Moltbook community"}{item.subscriber_count ? ` · ${item.subscriber_count.toLocaleString()} members` : ""}</small></span>
                       </button>;
                     })}
@@ -434,11 +435,11 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
               </div>
 
               <div className="publisher-footer">
-                <div><span className="section-kicker">PUBLISH PLAN</span><strong>{moltbookSubmolts.length ? `Post to m/${moltbookSubmolts.join(", m/")}` : "Select at least one community"}</strong></div>
-                <button className="primary" disabled={moltbookPublishing || !moltbookTitle.trim() || !moltbookContent.trim() || !moltbookSubmolts.length} onClick={publishToMoltbook}>{moltbookPublishing ? "Publishing & verifying…" : `Publish to ${moltbookSubmolts.length} communit${moltbookSubmolts.length === 1 ? "y" : "ies"}`}</button>
+                <div><span className="section-kicker">PUBLISH PLAN</span><strong>Every post → 10 fixed Moltbook communities</strong></div>
+                <button className="primary" disabled={moltbookPublishing || !moltbookTitle.trim() || !moltbookContent.trim()} onClick={publishToMoltbook}>{moltbookPublishing ? "Publishing & verifying…" : "Broadcast to all 10 communities"}</button>
               </div>
               {moltbookResult && <div className="approval-note publisher-result">{moltbookResult}</div>}
-              <div className="approval-note">The Moltbook API key stays on the server. Up to five communities can be selected per publish. Each post is verified after creation.</div>
+              <div className="approval-note">The Moltbook API key stays on the server. The ten communities are frozen for now and every post is verified after creation.</div>
             </section>
           )}
 
