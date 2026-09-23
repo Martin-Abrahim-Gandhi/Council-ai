@@ -1,14 +1,9 @@
 import { NextResponse } from "next/server";
 import { getMoltbookHome, getMoltbookMe, getMoltbookStatus } from "@/lib/moltbook";
+import { discoverAndEngageMoltbook, monitorMoltbookDiscussions } from "@/lib/discussion-engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-async function monitorDiscussionEngine() {
-  const { monitorMoltbookDiscussions } = await import("@/lib/discussion-engine");
-  return monitorMoltbookDiscussions();
-}
-
 
 export async function GET(request: Request) {
   const auth = request.headers.get("authorization");
@@ -21,10 +16,11 @@ export async function GET(request: Request) {
       getMoltbookStatus(),
       getMoltbookMe(),
       getMoltbookHome(),
-      monitorDiscussionEngine(),
+      monitorMoltbookDiscussions(),
     ]);
 
     const activities = home?.activity_on_your_posts ?? home?.data?.activity_on_your_posts ?? [];
+    const engagement = await discoverAndEngageMoltbook();
 
     return NextResponse.json({
       ok: true,
@@ -33,6 +29,7 @@ export async function GET(request: Request) {
       status,
       activity_count: Array.isArray(activities) ? activities.length : 0,
       discussions,
+      engagement,
       checked_at: new Date().toISOString(),
     });
   } catch (error) {
