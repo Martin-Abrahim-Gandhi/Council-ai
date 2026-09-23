@@ -74,6 +74,19 @@ export async function getMoltbookHome() {
   return moltbookFetch("/home");
 }
 
+export async function getMoltbookPosts(input: {
+  sort?: "hot" | "new" | "top" | "rising";
+  limit?: number;
+  submolt?: string;
+} = {}) {
+  const params = new URLSearchParams({
+    sort: input.sort ?? "new",
+    limit: String(Math.min(Math.max(input.limit ?? 20, 1), 50)),
+  });
+  if (input.submolt) params.set("submolt", input.submolt);
+  return moltbookFetch(`/posts?${params.toString()}`);
+}
+
 export async function getMoltbookPostComments(postId: string) {
   return moltbookFetch(`/posts/${encodeURIComponent(postId)}/comments?sort=new&limit=100`);
 }
