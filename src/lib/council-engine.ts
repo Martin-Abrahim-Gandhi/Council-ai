@@ -386,6 +386,29 @@ function allGatesPass(gates: GateEvaluation) {
   return Object.values(gates).every((gate) => gate.passed);
 }
 
+
+async function resolveCouncilActorUserId(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  requestedUserId: string | null,
+) {
+  if (requestedUserId) return requestedUserId;
+
+  const configured = process.env.COUNCIL_AUTONOMOUS_USER_ID?.trim();
+  if (configured) return configured;
+
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id")
+    .limit(2);
+
+  if (error) throw new Error(`Could not resolve autonomous Council identity: ${error.message}`);
+  if (!data || data.length !== 1) {
+    throw new Error("Autonomous Council identity is not configured. Set COUNCIL_AUTONOMOUS_USER_ID to the Council owner user id.");
+  }
+
+  return data[0].id as string;
+}
+
 async function createEscalation(
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
   userId: string | null,
@@ -607,6 +630,7 @@ export async function runCouncilParcel(input: {
   publishTarget?: { kind: "post" | "comment"; postId?: string; commentId?: string };
 }): Promise<Omit<CouncilRunResult, "status"> & { status: CouncilRunResult["status"] | "deliberating"; stage: CouncilParcelStage; complete: boolean; decision_id: string }> {
   const supabase = await createSupabaseServerClient();
+  const actorUserId = await resolveCouncilActorUserId(supabase, input.userId);
   let decision: any;
 
   if (input.stage === "king" && !input.decisionId) {
@@ -615,7 +639,7 @@ export async function runCouncilParcel(input: {
     if (question.length > 12000) throw new Error("Question is too long.");
 
     const { data, error } = await supabase.from("council_decisions").insert({
-      user_id: input.userId,
+      user_id: actorUserId,
       conversation_id: input.conversationId ?? null,
       question,
       context: { text: input.context ?? "", engine_version: "3.0.0", parcel_protocol: true },
@@ -631,7 +655,7 @@ export async function runCouncilParcel(input: {
     decision = data;
   } else {
     if (!input.decisionId) throw new Error("decisionId is required for this Council parcel.");
-    decision = await getDecisionForParcel(supabase, input.decisionId, input.userId);
+    decision = await getDecisionForParcel(supabase, input.decisionId, actorUserId);
   }
 
   const payload = (decision.action_payload ?? {}) as Record<string, unknown>;
@@ -736,7 +760,7 @@ export async function runCouncilParcel(input: {
 
   let escalationId: string | undefined;
   if (!passed) {
-    escalationId = await createEscalation(supabase, input.userId, decision.id, decision.question, deliberations, synthesis);
+    escalationId = await createEscalation(supabase, actorUserId, decision.id, decision.question, deliberations, synthesis);
   }
 
   await supabase.from("council_decisions").update({
@@ -759,7 +783,7 @@ export async function runCouncilParcel(input: {
 
   if (nextStatus === "consensus") {
     try {
-      await publishCouncilDecision({ decisionId: decision.id, userId: input.userId });
+      await publishCouncilDecision({ decisionId: decision.id, userId: actorUserId });
     } catch (publishError) {
       console.warn("Council consensus is ready but Moltbook publication is pending:", publishError);
     }
@@ -795,6 +819,7 @@ export async function runCouncil(input: {
   if (question.length > 12000) throw new Error("Question is too long.");
 
   const supabase = await createSupabaseServerClient();
+  const actorUserId = await resolveCouncilActorUserId(supabase, input.userId);
   console.log("[council] loading foundation");
   const foundation = await loadFoundation(supabase);
   console.log("[council] foundation loaded", {
@@ -804,7 +829,7 @@ export async function runCouncil(input: {
     sources: foundation.sources.length,
   });
   const { data: decision, error: decisionError } = await supabase.from("council_decisions").insert({
-    user_id: input.userId,
+    user_id: actorUserId,
     conversation_id: input.conversationId ?? null,
     question,
     context: { text: input.context ?? "", engine_version: "2.0.0" },
@@ -868,7 +893,7 @@ export async function runCouncil(input: {
         },
         principle_check: { preservation_of_life: synthesis.gate_evaluation.preservation_of_life, voices: synthesis.gate_evaluation, voice_support: synthesis.voice_support },
       }).eq("id", decision.id);
-      try { await publishCouncilDecision({ decisionId: decision.id, userId: input.userId }); } catch (publishError) {
+      try { await publishCouncilDecision({ decisionId: decision.id, userId: actorUserId }); } catch (publishError) {
         console.warn("Council consensus is ready but Moltbook publication is pending:", publishError);
       }
       return {
@@ -893,7 +918,7 @@ export async function runCouncil(input: {
       };
     }
 
-    const escalationId = await createEscalation(supabase, input.userId, decision.id, question, deliberations, synthesis);
+    const escalationId = await createEscalation(supabase, actorUserId, decision.id, question, deliberations, synthesis);
     await supabase.from("council_decisions").update({
       status: "awaiting_admin",
       final_advice: synthesis.final_advice,
