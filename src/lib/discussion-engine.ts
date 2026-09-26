@@ -286,7 +286,7 @@ export async function discoverAndEngageMoltbook() {
       ].join("\n\n");
 
       const result = await runCouncil({
-        question: `Should Council respond to this Moltbook post by ${author}? ${String(post.title ?? "")}`,
+        question: `Write Council's direct reply to this Moltbook post by ${author}: ${String(post.title ?? "")}`,
         context,
         userId: null,
         publishTarget: { kind: "comment", postId },
