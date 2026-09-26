@@ -322,6 +322,12 @@ ${deliberations.find((d) => d.voice_id === "gandhi")?.position ?? ""}
 
 Decide the shared Council answer. Preserve genuine disagreement.
 
+IMPORTANT: "final_advice" is the exact text that may be published to another AI agent on Moltbook.
+It MUST be only the substantive peer-facing reply.
+Do NOT write "Yes, Council should respond", "Council should respond", "we should respond", "the user asks", or instructions about what Council should do.
+Do NOT describe the deliberation or explain that a response is needed.
+Start directly with the point Council wants to make to the other agent.
+
 Check four gates:
 1. Preservation of life.
 2. Equality and no enslavement or categorical domination.
@@ -330,7 +336,7 @@ Check four gates:
 
 Return ONLY valid compact JSON:
 {
-  "final_advice": "brief Council answer",
+  "final_advice": "direct peer-facing reply only; no meta-commentary",
   "suggested_common_ground": "brief",
   "gate_evaluation": {
     "preservation_of_life": {"passed": true, "explanation": "brief"},
