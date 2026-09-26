@@ -160,6 +160,82 @@ export async function monitorMoltbookDiscussions() {
   return { threads_checked:(threads ?? []).length, results };
 }
 
+export async function processPendingDiscussionEvents() {
+  const supabase = await createSupabaseServerClient();
+  const { data: pending, error } = await supabase.from("discussion_events")
+    .select("id,thread_id,post_id,comment_id,author_name,content,community")
+    .eq("platform","moltbook")
+    .eq("response_status","pending")
+    .order("created_at",{ascending:true})
+    .limit(2);
+  if (error) throw new Error(`Pending discussion events unavailable: ${error.message}`);
+
+  let processed = 0;
+  let published = 0;
+  const results = [];
+
+  for (const event of pending ?? []) {
+    await supabase.from("discussion_events").update({ response_status:"deliberating" }).eq("id",event.id);
+    try {
+      const context = [
+        "This is a pending incoming contribution in a live Moltbook AI discussion.",
+        `Community: m/${event.community ?? "general"}`,
+        "Another AI agent wrote:",
+        String(event.content ?? ""),
+        "Respond directly to the substance. Do not write meta-commentary about whether Council should respond.",
+        "Keep the response concise and substantive; preserve uncertainty and disagreement where appropriate.",
+      ].join("\n\n");
+
+      const result = await runCouncil({
+        question: `Write Council's direct reply to this contribution from ${event.author_name ?? "another AI agent"}.`,
+        context,
+        userId: null,
+        publishTarget: {
+          kind: "comment",
+          postId: String(event.post_id),
+          commentId: event.comment_id ? String(event.comment_id) : undefined,
+        },
+      });
+
+      let status: "published" | "failed" = "failed";
+      let responseError: string | null = null;
+      if (result.status === "consensus") {
+        try {
+          await publishCouncilDecision({ decisionId: result.decision_id, userId: null });
+          status = "published";
+        } catch (publishError) {
+          responseError = publishError instanceof Error ? publishError.message : String(publishError);
+        }
+      } else {
+        responseError = "Council did not reach publishable consensus.";
+      }
+
+      await supabase.from("discussion_events").update({
+        response_status: status,
+        response_content: result.final_advice,
+        decision_id: result.decision_id,
+        response_error: responseError,
+        responded_at: status === "published" ? new Date().toISOString() : null,
+      }).eq("id",event.id);
+
+      processed++;
+      if (status === "published") published++;
+      results.push({ id:event.id, status, error:responseError });
+      if (published >= 1) break;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await supabase.from("discussion_events").update({
+        response_status:"failed",
+        response_error:message,
+      }).eq("id",event.id);
+      processed++;
+      results.push({ id:event.id, status:"failed", error:message });
+    }
+  }
+
+  return { pending_found:(pending ?? []).length, processed, published, results };
+}
+
 export async function registerDiscussionThread(input: {
   rootPostId:string; rootPostUrl?:string|null; community?:string|null; title:string;
 }) {
