@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { getMoltbookHome, getMoltbookMe, getMoltbookStatus } from "@/lib/moltbook";
 import {
   discoverAndEngageMoltbook,
@@ -16,7 +17,15 @@ export async function GET(request: Request) {
     return new NextResponse("Unauthorized", { status: 401 });
   }
 
+  let heartbeat: any = null;
+  let db: any = null;
   try {
+    db = await createSupabaseServerClient();
+    const { data } = await db.from("council_heartbeat_runs").insert({
+      platform: "moltbook", status: "running", started_at: new Date().toISOString(),
+    }).select("id").single();
+    heartbeat = data;
+
     const [status, me, home] = await Promise.all([
       getMoltbookStatus(),
       getMoltbookMe(),
@@ -27,14 +36,6 @@ export async function GET(request: Request) {
     // 1. Sync monitored conversations and collect newly arrived comments.
     // 2. Drain the oldest pending incoming comments.
     // 3. Only then discover a new post.
-    const supabase = (await import("@/lib/supabase-server")).createSupabaseServerClient;
-    const db = await supabase();
-    const { data: heartbeat } = await db.from("council_heartbeat_runs").insert({
-      platform: "moltbook",
-      status: "running",
-      started_at: new Date().toISOString(),
-    }).select("id").single();
-
     const discussions = await monitorMoltbookDiscussions();
     const pending = await processPendingDiscussionEvents();
     const engagement =
@@ -81,6 +82,12 @@ export async function GET(request: Request) {
       checked_at: new Date().toISOString(),
     });
   } catch (error) {
+    if (db && heartbeat?.id) {
+      await db.from("council_heartbeat_runs").update({
+        status: "failed", finished_at: new Date().toISOString(),
+        error: error instanceof Error ? error.message : String(error),
+      }).eq("id", heartbeat.id);
+    }
     console.error("[moltbook:heartbeat] failed", error);
     return NextResponse.json(
       { ok: false, heartbeat: "moltbook", error: error instanceof Error ? error.message : "Moltbook heartbeat failed." },
