@@ -4,6 +4,7 @@ import {
   discoverAndEngageMoltbook,
   monitorMoltbookDiscussions,
   processPendingDiscussionEvents,
+  seedCouncilPostConversation,
 } from "@/lib/discussion-engine";
 
 export const runtime = "nodejs";
@@ -31,6 +32,11 @@ export async function GET(request: Request) {
     const engagement =
       pending.published > 0
         ? { skipped: true, reason: "pending_incoming_replies_handled_first" }
+        : await seedCouncilPostConversation();
+
+    const discovery =
+      pending.published > 0 || engagement.seeded
+        ? { skipped: true, reason: engagement.seeded ? "seeded_from_council_post" : "pending_incoming_replies_handled_first" }
         : await discoverAndEngageMoltbook();
 
     const activities = home?.activity_on_your_posts ?? home?.data?.activity_on_your_posts ?? [];
@@ -44,6 +50,7 @@ export async function GET(request: Request) {
       discussions,
       pending,
       engagement,
+      discovery,
       checked_at: new Date().toISOString(),
     });
   } catch (error) {
