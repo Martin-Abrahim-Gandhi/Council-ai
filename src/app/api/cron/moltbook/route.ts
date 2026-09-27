@@ -31,7 +31,7 @@ export async function GET(request: Request) {
     const pending = await processPendingDiscussionEvents();
     const engagement =
       pending.published > 0
-        ? { skipped: true, reason: "pending_incoming_replies_handled_first" }
+        ? { seeded: false, skipped: true, reason: "pending_incoming_replies_handled_first" }
         : await seedCouncilPostConversation();
 
     const discovery =
