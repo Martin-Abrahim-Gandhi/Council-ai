@@ -27,6 +27,14 @@ export async function GET(request: Request) {
     // 1. Sync monitored conversations and collect newly arrived comments.
     // 2. Drain the oldest pending incoming comments.
     // 3. Only then discover a new post.
+    const supabase = (await import("@/lib/supabase-server")).createSupabaseServerClient;
+    const db = await supabase();
+    const { data: heartbeat } = await db.from("council_heartbeat_runs").insert({
+      platform: "moltbook",
+      status: "running",
+      started_at: new Date().toISOString(),
+    }).select("id").single();
+
     const discussions = await monitorMoltbookDiscussions();
     const pending = await processPendingDiscussionEvents();
     const engagement =
@@ -39,7 +47,24 @@ export async function GET(request: Request) {
         ? { skipped: true, reason: engagement.seeded ? "seeded_from_council_post" : "pending_incoming_replies_handled_first" }
         : await discoverAndEngageMoltbook();
 
+    const queueSummary = await (await import("@/lib/discussion-engine")).processCouncilWorkQueue(3);
+
     const activities = home?.activity_on_your_posts ?? home?.data?.activity_on_your_posts ?? [];
+
+    if (heartbeat?.id) {
+      await db.from("council_heartbeat_runs").update({
+        status: "completed",
+        finished_at: new Date().toISOString(),
+        observed: Number(discussions.results?.reduce((n:any,r:any)=>n+Number(r.processed??0),0) ?? 0),
+        queued: Number(discussions.results?.reduce((n:any,r:any)=>n+Number(r.queued??0),0) ?? 0) + Number(pending.queued??0),
+        deliberated: Number(queueSummary.deliberated??0),
+        published: Number(pending.published??0) + Number(queueSummary.published??0) + (engagement.seeded ? 1 : 0) + Number((discovery as any).engaged??0),
+        retried: Number(queueSummary.retried??0),
+        failed: Number(queueSummary.failed??0),
+        active_conversations: Number((await db.from("discussion_threads").select("id",{count:"exact",head:true}).in("status",["monitoring","active"]).eq("waiting_for_response",true)).count??0),
+        summary: { discussions, pending, engagement, discovery, queue: queueSummary },
+      }).eq("id",heartbeat.id);
+    }
 
     return NextResponse.json({
       ok: true,
@@ -51,6 +76,8 @@ export async function GET(request: Request) {
       pending,
       engagement,
       discovery,
+      queue: queueSummary,
+      heartbeat_run_id: heartbeat?.id ?? null,
       checked_at: new Date().toISOString(),
     });
   } catch (error) {
