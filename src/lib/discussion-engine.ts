@@ -152,7 +152,7 @@ async function inspectThread(supabase: any, thread: any) {
 export async function monitorMoltbookDiscussions() {
   const supabase = await createSupabaseServerClient();
   const { data: threads, error } = await supabase.from("discussion_threads")
-    .select("*").in("status",["monitoring","active"]).order("updated_at",{ascending:true}).limit(2);
+    .select("*").in("status",["monitoring","active"]).order("priority",{ascending:false}).order("updated_at",{ascending:true}).limit(5);
   if (error) throw new Error(`Discussion threads unavailable: ${error.message}`);
   const results = [];
   for (const thread of threads ?? []) {
