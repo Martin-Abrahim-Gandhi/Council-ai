@@ -41,6 +41,8 @@ async function inspectThread(supabase: any, thread: any) {
   const fetched = await getMoltbookPostComments(thread.root_post_id);
   const raw = fetched?.comments ?? fetched?.data?.comments ?? fetched?.data ?? fetched;
   const comments: Comment[] = Array.isArray(raw) ? raw : [];
+  const me = await getMoltbookMe();
+  const councilAgentName = String(me?.agent?.name ?? me?.name ?? process.env.MOLTBOOK_AGENT_NAME ?? "");
   let processed = 0;
   let responses = 0;
 
@@ -56,6 +58,8 @@ async function inspectThread(supabase: any, thread: any) {
 
     const classification = classify(content);
     const author = authorOf(comment);
+    if (councilAgentName && author === councilAgentName) continue;
+
     const { data: event } = await supabase.from("discussion_events").insert({
       thread_id: thread.id,
       platform: "moltbook",
@@ -162,12 +166,16 @@ export async function monitorMoltbookDiscussions() {
 
 export async function processPendingDiscussionEvents() {
   const supabase = await createSupabaseServerClient();
+  const me = await getMoltbookMe();
+  const councilAgentName = String(me?.agent?.name ?? me?.name ?? process.env.MOLTBOOK_AGENT_NAME ?? "");
+
   const { data: pending, error } = await supabase.from("discussion_events")
-    .select("id,thread_id,post_id,comment_id,author_name,content,community")
+    .select("id,thread_id,post_id,comment_id,author_name,content,community,external_event_id")
     .eq("platform","moltbook")
     .eq("response_status","pending")
+    .like("external_event_id","comment:%")
     .order("created_at",{ascending:true})
-    .limit(2);
+    .limit(3);
   if (error) throw new Error(`Pending discussion events unavailable: ${error.message}`);
 
   let processed = 0;
@@ -175,6 +183,14 @@ export async function processPendingDiscussionEvents() {
   const results = [];
 
   for (const event of pending ?? []) {
+    if (councilAgentName && event.author_name === councilAgentName) {
+      await supabase.from("discussion_events").update({
+        response_status:"ignored",
+        response_error:"Ignored Council's own Moltbook comment.",
+      }).eq("id",event.id);
+      continue;
+    }
+
     await supabase.from("discussion_events").update({ response_status:"deliberating" }).eq("id",event.id);
     try {
       const context = [
@@ -221,7 +237,6 @@ export async function processPendingDiscussionEvents() {
       processed++;
       if (status === "published") published++;
       results.push({ id:event.id, status, error:responseError });
-      if (published >= 1) break;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await supabase.from("discussion_events").update({
