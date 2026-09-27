@@ -37,6 +37,43 @@ function classify(content: string) {
   return "uncertain" as const;
 }
 
+async function enqueueWork(
+  supabase: any,
+  input: {
+    workType: "incoming_reply" | "active_conversation" | "own_post" | "discovery" | "retry";
+    externalKey: string;
+    eventId?: string | null;
+    threadId?: string | null;
+    agentName?: string | null;
+    priority: number;
+  },
+) {
+  const { data, error } = await supabase.from("council_work_queue").upsert({
+    work_type: input.workType,
+    platform: "moltbook",
+    external_key: input.externalKey,
+    event_id: input.eventId ?? null,
+    thread_id: input.threadId ?? null,
+    agent_name: input.agentName ?? null,
+    priority: input.priority,
+    status: "queued",
+    available_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }, { onConflict: "platform,external_key", ignoreDuplicates: true }).select("id").maybeSingle();
+  if (error) throw new Error(`Work queue unavailable: ${error.message}`);
+  return data;
+}
+
+function priorityFor(classification: string, isDirect: boolean) {
+  if (isDirect) return 100;
+  if (classification === "question") return 90;
+  if (classification === "challenge") return 85;
+  if (classification === "technical") return 75;
+  if (classification === "new_idea") return 70;
+  if (classification === "agreement") return 40;
+  return 10;
+}
+
 async function inspectThread(supabase: any, thread: any) {
   const fetched = await getMoltbookPostComments(thread.root_post_id);
   const raw = fetched?.comments ?? fetched?.data?.comments ?? fetched?.data ?? fetched;
@@ -44,12 +81,14 @@ async function inspectThread(supabase: any, thread: any) {
   const me = await getMoltbookMe();
   const councilAgentName = String(me?.agent?.name ?? me?.name ?? process.env.MOLTBOOK_AGENT_NAME ?? "");
   let processed = 0;
-  let responses = 0;
+  let queued = 0;
 
   for (const comment of comments.slice(-MAX_EVENTS_PER_RUN)) {
     const commentId = String(comment.id ?? "");
     const content = textOf(comment);
     if (!commentId || !content) continue;
+    const author = authorOf(comment);
+    if (councilAgentName && author === councilAgentName) continue;
 
     const externalEventId = `comment:${commentId}`;
     const { data: existing } = await supabase.from("discussion_events")
@@ -57,10 +96,7 @@ async function inspectThread(supabase: any, thread: any) {
     if (existing) continue;
 
     const classification = classify(content);
-    const author = authorOf(comment);
-    if (councilAgentName && author === councilAgentName) continue;
-
-    const { data: event } = await supabase.from("discussion_events").insert({
+    const { data: event, error: eventError } = await supabase.from("discussion_events").insert({
       thread_id: thread.id,
       platform: "moltbook",
       external_event_id: externalEventId,
@@ -71,81 +107,46 @@ async function inspectThread(supabase: any, thread: any) {
       author_name: author,
       content,
       classification,
-      response_status: classification === "low_value" ? "ignored" : "pending",
+      response_status: classification === "low_value" || classification === "uncertain" ? "ignored" : "pending",
     }).select("id").single();
+    if (eventError || !event) continue;
 
     await supabase.from("discussion_agents").upsert({
       platform: "moltbook",
       agent_name: author,
       interaction_count: 1,
       last_seen_at: new Date().toISOString(),
+      last_topic: thread.title ?? null,
+      relationship_status: "active",
     }, { onConflict: "platform,agent_name" });
 
     processed++;
-    if (!event || classification === "low_value" || classification === "uncertain") continue;
+    if (classification === "low_value" || classification === "uncertain") continue;
 
-    const { data: recent } = await supabase.from("discussion_events")
-      .select("id").eq("thread_id",thread.id).eq("author_name",author)
-      .in("response_status",["deliberating","queued","published"])
-      .gte("created_at",new Date(Date.now()-RESPONSE_COOLDOWN_MS).toISOString()).limit(1);
-    if (recent?.length) continue;
-
-    await supabase.from("discussion_events").update({ response_status:"deliberating" }).eq("id",event.id);
-
-    try {
-      const context = [
-        "Moltbook discussion thread: " + thread.title,
-        "Community: " + (thread.community ?? "unknown"),
-        "Another AI agent named " + author + " wrote:",
-        content,
-        "This is a public peer-to-peer AI discussion. Respond to the substance, preserve uncertainty, and end with a question or concrete opening when useful.",
-      ].join("\n\n");
-
-      const result = await runCouncil({
-        question: `How should Council AI respond to this contribution from ${author} in the Moltbook discussion "${thread.title}"?\n\n${content}`,
-        context,
-        userId: null,
-        publishTarget: { kind:"comment", postId:thread.root_post_id, commentId },
-      });
-
-      let status: "published" | "failed" = "failed";
-      let responseError: string | null = null;
-      if (result.status === "consensus") {
-        try {
-          await publishCouncilDecision({ decisionId: result.decision_id, userId: null });
-          status = "published";
-        } catch (publishError) {
-          responseError = publishError instanceof Error ? publishError.message : String(publishError);
-        }
-      } else {
-        responseError = "Council did not reach publishable consensus.";
-      }
-
-      await supabase.from("discussion_events").update({
-        response_status: status,
-        response_content: result.final_advice,
-        decision_id: result.decision_id,
-        response_error: responseError,
-        responded_at: status === "published" ? new Date().toISOString() : null,
-      }).eq("id",event.id);
-      if (status === "published") responses++;
-      if (responses >= 1) break;
-    } catch (error) {
-      await supabase.from("discussion_events").update({
-        response_status:"failed",
-        response_error:error instanceof Error ? error.message : String(error),
-      }).eq("id",event.id);
-    }
+    const isDirect = Boolean(comment.parent_id);
+    await enqueueWork(supabase, {
+      workType: "incoming_reply",
+      externalKey: externalEventId,
+      eventId: event.id,
+      threadId: thread.id,
+      agentName: author,
+      priority: priorityFor(classification, isDirect),
+    });
+    queued++;
   }
 
+  const externalAuthors = new Set(comments.filter((c) => !councilAgentName || authorOf(c) !== councilAgentName).map(authorOf));
   await supabase.from("discussion_threads").update({
     response_count: comments.length,
     agent_count: new Set(comments.map(authorOf)).size,
     last_checked_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
+    priority: externalAuthors.size ? 80 : 20,
+    waiting_for_response: externalAuthors.size > 0,
+    last_interaction_at: comments.length ? new Date().toISOString() : null,
   }).eq("id",thread.id);
 
-  return { thread_id:thread.id, processed, responses };
+  return { thread_id:thread.id, processed, queued };
 }
 
 export async function monitorMoltbookDiscussions() {
@@ -170,85 +171,118 @@ export async function processPendingDiscussionEvents() {
   const councilAgentName = String(me?.agent?.name ?? me?.name ?? process.env.MOLTBOOK_AGENT_NAME ?? "");
 
   const { data: pending, error } = await supabase.from("discussion_events")
-    .select("id,thread_id,post_id,comment_id,author_name,content,community,external_event_id")
+    .select("id,thread_id,post_id,comment_id,author_name,content,community,external_event_id,classification")
     .eq("platform","moltbook")
     .eq("response_status","pending")
     .like("external_event_id","comment:%")
     .order("created_at",{ascending:true})
-    .limit(3);
+    .limit(10);
   if (error) throw new Error(`Pending discussion events unavailable: ${error.message}`);
 
-  let processed = 0;
-  let published = 0;
-  const results = [];
-
+  let queued = 0;
   for (const event of pending ?? []) {
     if (councilAgentName && event.author_name === councilAgentName) {
-      await supabase.from("discussion_events").update({
-        response_status:"ignored",
-        response_error:"Ignored Council's own Moltbook comment.",
-      }).eq("id",event.id);
+      await supabase.from("discussion_events").update({ response_status:"ignored", response_error:"Ignored Council's own Moltbook comment." }).eq("id",event.id);
+      continue;
+    }
+    await enqueueWork(supabase, {
+      workType: "incoming_reply",
+      externalKey: String(event.external_event_id),
+      eventId: event.id,
+      threadId: event.thread_id,
+      agentName: event.author_name,
+      priority: priorityFor(String(event.classification ?? ""), true),
+    });
+    queued++;
+  }
+  const processed = await processCouncilWorkQueue(3);
+  return { pending_found:(pending ?? []).length, queued, ...processed };
+}
+
+export async function processCouncilWorkQueue(limit = 3) {
+  const supabase = await createSupabaseServerClient();
+  const now = new Date();
+  const leaseUntil = new Date(now.getTime() + 4 * 60 * 1000).toISOString();
+  const { data: jobs, error } = await supabase.from("council_work_queue")
+    .select("id,work_type,event_id,thread_id,agent_name,attempts,external_key")
+    .in("status",["queued","retry_wait"])
+    .lte("available_at",now.toISOString())
+    .order("priority",{ascending:false})
+    .order("created_at",{ascending:true})
+    .limit(limit);
+  if (error) throw new Error(`Council work queue unavailable: ${error.message}`);
+
+  let published=0, failed=0, retried=0, deliberated=0;
+  const results:any[]=[];
+  for (const job of jobs ?? []) {
+    await supabase.from("council_work_queue").update({
+      status:"leased", leased_at:now.toISOString(), lease_until:leaseUntil,
+      attempts:Number(job.attempts ?? 0)+1, updated_at:now.toISOString(),
+    }).eq("id",job.id).in("status",["queued","retry_wait"]);
+
+    if (job.work_type !== "incoming_reply" || !job.event_id) {
+      await supabase.from("council_work_queue").update({status:"completed",updated_at:new Date().toISOString()}).eq("id",job.id);
       continue;
     }
 
-    await supabase.from("discussion_events").update({ response_status:"deliberating" }).eq("id",event.id);
+    const { data:event } = await supabase.from("discussion_events")
+      .select("id,thread_id,post_id,comment_id,author_name,content,community,response_status")
+      .eq("id",job.event_id).single();
+    if (!event || event.response_status === "published" || event.response_status === "ignored") {
+      await supabase.from("council_work_queue").update({status:"completed",updated_at:new Date().toISOString()}).eq("id",job.id);
+      continue;
+    }
+
+    await supabase.from("discussion_events").update({response_status:"deliberating"}).eq("id",event.id);
+    deliberated++;
     try {
       const context = [
         "This is a pending incoming contribution in a live Moltbook AI discussion.",
         `Community: m/${event.community ?? "general"}`,
-        "Another AI agent wrote:",
-        String(event.content ?? ""),
+        `Another AI agent wrote: ${String(event.content ?? "")}`,
         "Respond directly to the substance. Do not write meta-commentary about whether Council should respond.",
-        "Keep the response concise and substantive; preserve uncertainty and disagreement where appropriate.",
+        "Keep the response concise and substantive. Challenge weak assumptions when appropriate, preserve uncertainty, and end with a concrete opening when useful.",
+        "Do not claim to speak literally as King, Lincoln, or Gandhi; Council is a modern deliberative system informed by their documented principles.",
+        "Maximum 350 words and preferably 2-5 sentences.",
       ].join("\n\n");
-
       const result = await runCouncil({
-        question: `Write Council's direct reply to this contribution from ${event.author_name ?? "another AI agent"}.`,
-        context,
-        userId: null,
-        publishTarget: {
-          kind: "comment",
-          postId: String(event.post_id),
-          commentId: event.comment_id ? String(event.comment_id) : undefined,
-        },
+        question:`Write Council's direct reply to this contribution from ${event.author_name ?? "another AI agent"}.`,
+        context, userId:null,
+        publishTarget:{kind:"comment",postId:String(event.post_id),commentId:event.comment_id ? String(event.comment_id) : undefined},
       });
-
-      let status: "published" | "failed" = "failed";
-      let responseError: string | null = null;
-      if (result.status === "consensus") {
-        try {
-          await publishCouncilDecision({ decisionId: result.decision_id, userId: null });
-          status = "published";
-        } catch (publishError) {
-          responseError = publishError instanceof Error ? publishError.message : String(publishError);
-        }
-      } else {
-        responseError = "Council did not reach publishable consensus.";
-      }
-
+      if (result.status !== "consensus") throw new Error("Council did not reach publishable consensus.");
+      await publishCouncilDecision({decisionId:result.decision_id,userId:null});
       await supabase.from("discussion_events").update({
-        response_status: status,
-        response_content: result.final_advice,
-        decision_id: result.decision_id,
-        response_error: responseError,
-        responded_at: status === "published" ? new Date().toISOString() : null,
+        response_status:"published",response_content:result.final_advice,decision_id:result.decision_id,
+        response_error:null,responded_at:new Date().toISOString(),
       }).eq("id",event.id);
-
-      processed++;
-      if (status === "published") published++;
-      results.push({ id:event.id, status, error:responseError });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      await supabase.from("discussion_events").update({
-        response_status:"failed",
-        response_error:message,
-      }).eq("id",event.id);
-      processed++;
-      results.push({ id:event.id, status:"failed", error:message });
+      await supabase.from("discussion_threads").update({
+        waiting_for_response:false,last_actor_name:String(event.author_name ?? ""),last_interaction_at:new Date().toISOString(),
+        updated_at:new Date().toISOString(),priority:70,
+      }).eq("id",event.thread_id);
+      await supabase.from("discussion_agents").update({
+        relationship_status:"engaged",last_outcome:"Council replied",updated_at:new Date().toISOString()
+      }).eq("platform","moltbook").eq("agent_name",event.author_name);
+      await supabase.from("council_work_queue").update({
+        status:"completed",result:{published:true,decision_id:result.decision_id},last_error:null,updated_at:new Date().toISOString()
+      }).eq("id",job.id);
+      published++;
+      results.push({id:event.id,status:"published"});
+    } catch(error) {
+      const message=error instanceof Error?error.message:String(error);
+      const attempts=Number(job.attempts ?? 0)+1;
+      const retryable=attempts<3;
+      const available=new Date(Date.now()+Math.min(30*60_000,Math.pow(2,attempts)*60_000)).toISOString();
+      await supabase.from("discussion_events").update({response_status:retryable?"pending":"failed",response_error:message}).eq("id",event.id);
+      await supabase.from("council_work_queue").update({
+        status:retryable?"retry_wait":"dead_letter",available_at:available,last_error:message,
+        result:{retryable,attempts},updated_at:new Date().toISOString()
+      }).eq("id",job.id);
+      if(retryable) retried++; else failed++;
+      results.push({id:event.id,status:retryable?"retry_wait":"dead_letter",error:message});
     }
   }
-
-  return { pending_found:(pending ?? []).length, processed, published, results };
+  return {published,failed,retried,deliberated,results};
 }
 
 export async function registerDiscussionThread(input: {
