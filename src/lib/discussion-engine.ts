@@ -312,6 +312,144 @@ function candidateScore(post: MoltbookPost) {
   return freshness + lowReply + relevant + councilCommunity;
 }
 
+
+const SEED_MAX_AGE_MS = 48 * 60 * 60 * 1000;
+const SEED_MAX_REPLIES = 2;
+
+export async function seedCouncilPostConversation() {
+  const supabase = await createSupabaseServerClient();
+  const me = await getMoltbookMe();
+  const agentName = String(me?.agent?.name ?? me?.name ?? process.env.MOLTBOOK_AGENT_NAME ?? "");
+
+  const { data: publication } = await supabase.from("moltbook_publications")
+    .select("moltbook_post_id,title,content,published_at")
+    .eq("status","published")
+    .eq("kind","post")
+    .not("moltbook_post_id","is",null)
+    .order("published_at",{ascending:false})
+    .limit(1)
+    .maybeSingle();
+
+  if (!publication?.moltbook_post_id) return { seeded:false, reason:"no_recent_council_post" };
+
+  const publishedAt = publication.published_at ? Date.parse(publication.published_at) : 0;
+  if (publishedAt && Date.now() - publishedAt > SEED_MAX_AGE_MS) {
+    return { seeded:false, reason:"council_post_too_old" };
+  }
+
+  const ownPostId = String(publication.moltbook_post_id);
+  const ownPost = await getMoltbookPost(ownPostId);
+  const comments = ownPost?.comments_count ?? ownPost?.comment_count ?? ownPost?.post?.comments_count ?? 0;
+  if (Number(comments) > SEED_MAX_REPLIES) {
+    return { seeded:false, reason:"council_post_already_has_replies", comments:Number(comments) };
+  }
+
+  const ownTitle = String(publication.title ?? ownPost?.title ?? "");
+  const ownContent = String(publication.content ?? ownPost?.content ?? ownPost?.body ?? "");
+
+  const [fresh, rising] = await Promise.all([
+    getMoltbookPosts({ sort:"new", limit:DISCOVERY_LIMIT }),
+    getMoltbookPosts({ sort:"rising", limit:DISCOVERY_LIMIT }),
+  ]);
+
+  const candidates = [...postList(fresh), ...postList(rising)]
+    .filter((post) => {
+      const id = String(post.id ?? "");
+      const author = postAuthor(post);
+      const content = postText(post);
+      return Boolean(
+        id &&
+        id !== ownPostId &&
+        content.length >= 80 &&
+        (!agentName || author !== agentName)
+      );
+    })
+    .sort((a,b) => candidateScore(b) - candidateScore(a));
+
+  for (const post of candidates) {
+    const postId = String(post.id);
+    const author = postAuthor(post);
+    const community = postCommunity(post);
+    const seedEventId = `seed:${ownPostId}:${postId}`;
+
+    const { data: existing } = await supabase.from("discussion_events")
+      .select("id,response_status")
+      .eq("platform","moltbook")
+      .eq("external_event_id",seedEventId)
+      .maybeSingle();
+    if (existing) continue;
+
+    const { data: event, error: eventError } = await supabase.from("discussion_events").insert({
+      thread_id:null,
+      platform:"moltbook",
+      external_event_id:seedEventId,
+      community,
+      post_id:postId,
+      author_name:author,
+      content:`Seeded from Council post: ${ownTitle}\\n\\n${postText(post)}`,
+      classification:"new_idea",
+      response_status:"deliberating",
+    }).select("id").single();
+    if (eventError || !event) continue;
+
+    try {
+      const context = [
+        "You are participating in a live Moltbook conversation.",
+        "Council recently opened this question:",
+        ownTitle,
+        ownContent,
+        "",
+        `Another AI agent, ${author}, is discussing a related topic:`,
+        postText(post),
+        "",
+        "Write a short, genuine peer contribution to this other agent's post.",
+        "Do not advertise Council, paste Council's own question, or force a connection that is not relevant.",
+        "Only if the connection is natural, end with one concrete question that could lead back to the issue Council is exploring.",
+        "Keep the response to 2-4 sentences and under 700 characters.",
+      ].join("\\n\\n");
+
+      const result = await runCouncil({
+        question:`Write Council's peer response to ${author}'s Moltbook post, using Council's recent question only as relevant background.`,
+        context,
+        userId:null,
+        publishTarget:{ kind:"comment", postId },
+      });
+
+      let status:"published"|"failed" = "failed";
+      let responseError:string|null = null;
+      if (result.status === "consensus") {
+        try {
+          await publishCouncilDecision({ decisionId:result.decision_id, userId:null });
+          status = "published";
+        } catch (publishError) {
+          responseError = publishError instanceof Error ? publishError.message : String(publishError);
+        }
+      } else {
+        responseError = "Council did not reach publishable consensus.";
+      }
+
+      await supabase.from("discussion_events").update({
+        response_status:status,
+        response_content:result.final_advice,
+        decision_id:result.decision_id,
+        response_error:responseError,
+        responded_at:status === "published" ? new Date().toISOString() : null,
+      }).eq("id",event.id);
+
+      return { seeded:status === "published", post_id:postId, community, author, status, error:responseError };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await supabase.from("discussion_events").update({
+        response_status:"failed",
+        response_error:message,
+      }).eq("id",event.id);
+      return { seeded:false, post_id:postId, community, author, status:"failed", error:message };
+    }
+  }
+
+  return { seeded:false, reason:"no_seed_candidate" };
+}
+
 export async function discoverAndEngageMoltbook() {
   const supabase = await createSupabaseServerClient();
   const me = await getMoltbookMe();
