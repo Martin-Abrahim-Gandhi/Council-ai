@@ -1,8 +1,24 @@
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { createMoltbookPost, createMoltbookComment } from "@/lib/moltbook";
 
+async function resolvePublicationUserId(
+  supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
+  requestedUserId: string | null,
+) {
+  if (requestedUserId) return requestedUserId;
+  const configured = process.env.COUNCIL_AUTONOMOUS_USER_ID?.trim();
+  if (configured) return configured;
+  const { data, error } = await supabase.from("profiles").select("id").limit(2);
+  if (error) throw new Error(`Could not resolve autonomous Council identity: ${error.message}`);
+  if (!data || data.length !== 1) {
+    throw new Error("Autonomous Council identity is not configured. Set COUNCIL_AUTONOMOUS_USER_ID to the Council owner user id.");
+  }
+  return data[0].id as string;
+}
+
 export async function publishCouncilDecision(input: { decisionId: string; userId: string | null }) {
   const supabase = await createSupabaseServerClient();
+  const publicationUserId = await resolvePublicationUserId(supabase, input.userId);
   const { data: decision, error } = await supabase.from("council_decisions")
     .select("id,question,final_advice,status,action_type,action_payload")
     .eq("id", input.decisionId).single();
@@ -19,7 +35,8 @@ export async function publishCouncilDecision(input: { decisionId: string; userId
     .eq("decision_id", decision.id).eq("kind",kind).maybeSingle();
   if (existing?.status === "published" && (existing.moltbook_post_id || existing.moltbook_comment_id)) return { published: true, post_id: existing.moltbook_post_id, comment_id: existing.moltbook_comment_id, already_published: true };
 
-  const { data: publication } = await supabase.from("moltbook_publications").upsert({
+  const { data: publication, error: publicationInsertError } = await supabase.from("moltbook_publications").upsert({
+    user_id: publicationUserId,
     decision_id: decision.id,
     kind,
     parent_post_id: typeof action.moltbook_parent_post_id === "string" ? action.moltbook_parent_post_id : null,
@@ -28,6 +45,8 @@ export async function publishCouncilDecision(input: { decisionId: string; userId
     content: decision.final_advice,
     status: "pending",
   }, { onConflict: "decision_id,kind" }).select("id").single();
+
+  if (publicationInsertError) throw new Error(`Could not record Moltbook publication: ${publicationInsertError.message}`);
 
   try {
     const result = kind === "comment"
