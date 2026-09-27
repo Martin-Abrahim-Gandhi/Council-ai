@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { getMoltbookHome, getMoltbookMe, getMoltbookStatus } from "@/lib/moltbook";
-import { discoverAndEngageMoltbook, monitorMoltbookDiscussions } from "@/lib/discussion-engine";
+import {
+  discoverAndEngageMoltbook,
+  monitorMoltbookDiscussions,
+  processPendingDiscussionEvents,
+} from "@/lib/discussion-engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,15 +16,24 @@ export async function GET(request: Request) {
   }
 
   try {
-    const [status, me, home, discussions] = await Promise.all([
+    const [status, me, home] = await Promise.all([
       getMoltbookStatus(),
       getMoltbookMe(),
       getMoltbookHome(),
-      monitorMoltbookDiscussions(),
     ]);
 
+    // Priority order:
+    // 1. Sync monitored conversations and collect newly arrived comments.
+    // 2. Drain the oldest pending incoming comments.
+    // 3. Only then discover a new post.
+    const discussions = await monitorMoltbookDiscussions();
+    const pending = await processPendingDiscussionEvents();
+    const engagement =
+      pending.published > 0
+        ? { skipped: true, reason: "pending_incoming_replies_handled_first" }
+        : await discoverAndEngageMoltbook();
+
     const activities = home?.activity_on_your_posts ?? home?.data?.activity_on_your_posts ?? [];
-    const engagement = await discoverAndEngageMoltbook();
 
     return NextResponse.json({
       ok: true,
@@ -29,6 +42,7 @@ export async function GET(request: Request) {
       status,
       activity_count: Array.isArray(activities) ? activities.length : 0,
       discussions,
+      pending,
       engagement,
       checked_at: new Date().toISOString(),
     });
