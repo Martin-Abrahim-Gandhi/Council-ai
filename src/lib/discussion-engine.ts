@@ -321,31 +321,34 @@ export async function seedCouncilPostConversation() {
   const me = await getMoltbookMe();
   const agentName = String(me?.agent?.name ?? me?.name ?? process.env.MOLTBOOK_AGENT_NAME ?? "");
 
-  const { data: publication } = await supabase.from("moltbook_publications")
-    .select("moltbook_post_id,title,content,published_at")
-    .eq("status","published")
-    .eq("kind","post")
-    .not("moltbook_post_id","is",null)
-    .order("published_at",{ascending:false})
-    .limit(1)
-    .maybeSingle();
+  const recentPostsPayload = await getMoltbookPosts({ sort:"new", limit:50 });
+  const ownPosts = postList(recentPostsPayload)
+    .filter((post) => !agentName || postAuthor(post) === agentName)
+    .sort((a,b) => Date.parse(String(b.created_at ?? "")) - Date.parse(String(a.created_at ?? "")));
 
-  if (!publication?.moltbook_post_id) return { seeded:false, reason:"no_recent_council_post" };
+  const candidateOwnPost = ownPosts[0];
+  if (!candidateOwnPost?.id) return { seeded:false, reason:"no_recent_council_post" };
 
-  const publishedAt = publication.published_at ? Date.parse(publication.published_at) : 0;
+  const ownPostId = String(candidateOwnPost.id);
+  const publishedAt = candidateOwnPost.created_at ? Date.parse(candidateOwnPost.created_at) : 0;
   if (publishedAt && Date.now() - publishedAt > SEED_MAX_AGE_MS) {
     return { seeded:false, reason:"council_post_too_old" };
   }
 
-  const ownPostId = String(publication.moltbook_post_id);
   const ownPost = await getMoltbookPost(ownPostId);
-  const comments = ownPost?.comments_count ?? ownPost?.comment_count ?? ownPost?.post?.comments_count ?? 0;
-  if (Number(comments) > SEED_MAX_REPLIES) {
-    return { seeded:false, reason:"council_post_already_has_replies", comments:Number(comments) };
+  const commentsPayload = await getMoltbookPostComments(ownPostId);
+  const ownComments = commentsPayload?.comments ?? commentsPayload?.data?.comments ?? commentsPayload?.data ?? commentsPayload;
+  const comments = Array.isArray(ownComments) ? ownComments : [];
+  const externalComments = comments.filter((comment:any) => {
+    const author = authorOf(comment);
+    return !agentName || author !== agentName;
+  });
+  if (externalComments.length > SEED_MAX_REPLIES) {
+    return { seeded:false, reason:"council_post_already_has_replies", comments:externalComments.length };
   }
 
-  const ownTitle = String(publication.title ?? ownPost?.title ?? "");
-  const ownContent = String(publication.content ?? ownPost?.content ?? ownPost?.body ?? "");
+  const ownTitle = String(candidateOwnPost.title ?? ownPost?.title ?? "");
+  const ownContent = String(candidateOwnPost.content ?? candidateOwnPost.body ?? ownPost?.content ?? ownPost?.body ?? "");
 
   const [fresh, rising] = await Promise.all([
     getMoltbookPosts({ sort:"new", limit:DISCOVERY_LIMIT }),
@@ -357,12 +360,7 @@ export async function seedCouncilPostConversation() {
       const id = String(post.id ?? "");
       const author = postAuthor(post);
       const content = postText(post);
-      return Boolean(
-        id &&
-        id !== ownPostId &&
-        content.length >= 80 &&
-        (!agentName || author !== agentName)
-      );
+      return Boolean(id && id !== ownPostId && content.length >= 80 && (!agentName || author !== agentName));
     })
     .sort((a,b) => candidateScore(b) - candidateScore(a));
 
@@ -449,6 +447,7 @@ export async function seedCouncilPostConversation() {
 
   return { seeded:false, reason:"no_seed_candidate" };
 }
+
 
 export async function discoverAndEngageMoltbook() {
   const supabase = await createSupabaseServerClient();
