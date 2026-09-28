@@ -6,10 +6,13 @@ import {
   monitorMoltbookDiscussions,
   processPendingDiscussionEvents,
   seedCouncilPostConversation,
+  processCouncilWorkQueue,
 } from "@/lib/discussion-engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const STALE_HEARTBEAT_MS = 10 * 60 * 1000;
 
 export async function GET(request: Request) {
   const auth = request.headers.get("authorization");
@@ -19,12 +22,32 @@ export async function GET(request: Request) {
 
   let heartbeat: any = null;
   let db: any = null;
+
   try {
     db = await createSupabaseServerClient();
-    const { data } = await db.from("council_heartbeat_runs").insert({
-      platform: "moltbook", status: "running", started_at: new Date().toISOString(),
-    }).select("id").single();
-    heartbeat = data;
+
+    // A serverless function can be terminated before the catch/finally block runs.
+    // Reconcile old "running" rows at the start of the next heartbeat so they
+    // cannot remain falsely running forever.
+    const staleBefore = new Date(Date.now() - STALE_HEARTBEAT_MS).toISOString();
+    await db.from("council_heartbeat_runs").update({
+      status: "failed",
+      finished_at: new Date().toISOString(),
+      error: "Heartbeat execution ended before completion was recorded.",
+    }).eq("platform", "moltbook").eq("status", "running").lt("started_at", staleBefore);
+
+    const { data: heartbeatRow, error: heartbeatInsertError } = await db
+      .from("council_heartbeat_runs")
+      .insert({
+        platform: "moltbook",
+        status: "running",
+        started_at: new Date().toISOString(),
+      })
+      .select("id")
+      .single();
+
+    if (heartbeatInsertError) throw heartbeatInsertError;
+    heartbeat = heartbeatRow;
 
     const [status, me, home] = await Promise.all([
       getMoltbookStatus(),
@@ -32,12 +55,9 @@ export async function GET(request: Request) {
       getMoltbookHome(),
     ]);
 
-    // Priority order:
-    // 1. Sync monitored conversations and collect newly arrived comments.
-    // 2. Drain the oldest pending incoming comments.
-    // 3. Only then discover a new post.
     const discussions = await monitorMoltbookDiscussions();
     const pending = await processPendingDiscussionEvents();
+
     const engagement =
       pending.published > 0
         ? { seeded: false, skipped: true, reason: "pending_incoming_replies_handled_first" }
@@ -45,26 +65,51 @@ export async function GET(request: Request) {
 
     const discovery =
       pending.published > 0 || engagement.seeded
-        ? { skipped: true, reason: engagement.seeded ? "seeded_from_council_post" : "pending_incoming_replies_handled_first" }
+        ? {
+            skipped: true,
+            reason: engagement.seeded
+              ? "seeded_from_council_post"
+              : "pending_incoming_replies_handled_first",
+          }
         : await discoverAndEngageMoltbook();
 
-    const queueSummary = await (await import("@/lib/discussion-engine")).processCouncilWorkQueue(3);
-
+    const queueSummary = await processCouncilWorkQueue(3);
     const activities = home?.activity_on_your_posts ?? home?.data?.activity_on_your_posts ?? [];
 
     if (heartbeat?.id) {
+      const activeThreads = await db
+        .from("discussion_threads")
+        .select("id", { count: "exact", head: true })
+        .in("status", ["monitoring", "active"])
+        .eq("waiting_for_response", true);
+
       await db.from("council_heartbeat_runs").update({
         status: "completed",
         finished_at: new Date().toISOString(),
-        observed: Number(discussions.results?.reduce((n:any,r:any)=>n+Number(r.processed??0),0) ?? 0),
-        queued: Number(discussions.results?.reduce((n:any,r:any)=>n+Number(r.queued??0),0) ?? 0) + Number(pending.queued??0),
-        deliberated: Number(queueSummary.deliberated??0),
-        published: Number(pending.published??0) + Number(queueSummary.published??0) + (engagement.seeded ? 1 : 0) + Number((discovery as any).engaged??0),
-        retried: Number(queueSummary.retried??0),
-        failed: Number(queueSummary.failed??0),
-        active_conversations: Number((await db.from("discussion_threads").select("id",{count:"exact",head:true}).in("status",["monitoring","active"]).eq("waiting_for_response",true)).count??0),
+        observed: Number(
+          discussions.results?.reduce(
+            (n: number, r: any) => n + Number(r.processed ?? 0),
+            0,
+          ) ?? 0,
+        ),
+        queued:
+          Number(
+            discussions.results?.reduce(
+              (n: number, r: any) => n + Number(r.queued ?? 0),
+              0,
+            ) ?? 0,
+          ) + Number(pending.queued ?? 0),
+        deliberated: Number(queueSummary.deliberated ?? 0),
+        published:
+          Number(pending.published ?? 0) +
+          Number(queueSummary.published ?? 0) +
+          (engagement.seeded ? 1 : 0) +
+          Number((discovery as any).engaged ?? 0),
+        retried: Number(queueSummary.retried ?? 0),
+        failed: Number(queueSummary.failed ?? 0),
+        active_conversations: Number(activeThreads.count ?? 0),
         summary: { discussions, pending, engagement, discovery, queue: queueSummary },
-      }).eq("id",heartbeat.id);
+      }).eq("id", heartbeat.id);
     }
 
     return NextResponse.json({
@@ -84,13 +129,20 @@ export async function GET(request: Request) {
   } catch (error) {
     if (db && heartbeat?.id) {
       await db.from("council_heartbeat_runs").update({
-        status: "failed", finished_at: new Date().toISOString(),
+        status: "failed",
+        finished_at: new Date().toISOString(),
         error: error instanceof Error ? error.message : String(error),
       }).eq("id", heartbeat.id);
     }
+
     console.error("[moltbook:heartbeat] failed", error);
+
     return NextResponse.json(
-      { ok: false, heartbeat: "moltbook", error: error instanceof Error ? error.message : "Moltbook heartbeat failed." },
+      {
+        ok: false,
+        heartbeat: "moltbook",
+        error: error instanceof Error ? error.message : "Moltbook heartbeat failed.",
+      },
       { status: 500 },
     );
   }
