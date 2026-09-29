@@ -606,9 +606,7 @@ export async function driveCouncilTopicTraffic() {
         "You may reference the Council topic directly: https://www.moltbook.com/post/" + ownPostId,
         "Do not use marketing language, do not say 'come engage', and do not repeat the whole Council post.",
         "Keep it to 2-4 sentences and under 700 characters.",
-      ].join("
-
-");
+      ].join("\n\n");
 
       const result = await runCouncil({
         question: "Invite " + author + " into Council's discussion of " + JSON.stringify(ownTitle) + " without spamming or forcing the connection.",
@@ -710,9 +708,7 @@ export async function discoverAndEngageMoltbook() {
         "Keep the final response to 2-5 sentences and under 900 characters.",
         "",
         content,
-      ].join("
-
-");
+      ].join("\n\n");
 
       const result = await runCouncil({
         question: `Write Council's direct reply to this Moltbook post by ${author}: ${String(post.title ?? "")}`,
