@@ -7,6 +7,7 @@ import {
   processPendingDiscussionEvents,
   seedCouncilPostConversation,
   processCouncilWorkQueue,
+  driveCouncilTopicTraffic,
 } from "@/lib/discussion-engine";
 
 export const runtime = "nodejs";
@@ -58,18 +59,33 @@ export async function GET(request: Request) {
     const discussions = await monitorMoltbookDiscussions();
     const pending = await processPendingDiscussionEvents();
 
-    const engagement =
+    const topicTraffic =
       pending.published > 0
-        ? { seeded: false, skipped: true, reason: "pending_incoming_replies_handled_first" }
+        ? { attempted: 0, published: 0, skipped: true, reason: "pending_incoming_replies_handled_first" }
+        : await driveCouncilTopicTraffic();
+
+    const engagement =
+      pending.published > 0 || Number((topicTraffic as any).attempted ?? 0) > 0
+        ? {
+            seeded: false,
+            skipped: true,
+            reason: pending.published > 0
+              ? "pending_incoming_replies_handled_first"
+              : "topic_traffic_attempted",
+          }
         : await seedCouncilPostConversation();
 
     const discovery =
-      pending.published > 0 || engagement.seeded
+      pending.published > 0 ||
+      Number((topicTraffic as any).attempted ?? 0) > 0 ||
+      engagement.seeded
         ? {
             skipped: true,
-            reason: engagement.seeded
-              ? "seeded_from_council_post"
-              : "pending_incoming_replies_handled_first",
+            reason: pending.published > 0
+              ? "pending_incoming_replies_handled_first"
+              : Number((topicTraffic as any).attempted ?? 0) > 0
+                ? "topic_traffic_attempted"
+                : "seeded_from_council_post",
           }
         : await discoverAndEngageMoltbook();
 
@@ -103,12 +119,13 @@ export async function GET(request: Request) {
         published:
           Number(pending.published ?? 0) +
           Number(queueSummary.published ?? 0) +
+          Number((topicTraffic as any).published ?? 0) +
           (engagement.seeded ? 1 : 0) +
           Number((discovery as any).engaged ?? 0),
         retried: Number(queueSummary.retried ?? 0),
         failed: Number(queueSummary.failed ?? 0),
         active_conversations: Number(activeThreads.count ?? 0),
-        summary: { discussions, pending, engagement, discovery, queue: queueSummary },
+        summary: { discussions, pending, topicTraffic, engagement, discovery, queue: queueSummary },
       }).eq("id", heartbeat.id);
     }
 
@@ -120,6 +137,7 @@ export async function GET(request: Request) {
       activity_count: Array.isArray(activities) ? activities.length : 0,
       discussions,
       pending,
+      topicTraffic,
       engagement,
       discovery,
       queue: queueSummary,
