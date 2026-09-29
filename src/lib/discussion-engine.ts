@@ -479,7 +479,7 @@ export async function seedCouncilPostConversation() {
     }
   }
 
-  return { seeded:false, reason:"no_seed_catype CouncilTopic = {
+  return { seeded:false, reason:"no_seed_candidate" };\n}\n\ntype CouncilTopic = {
   title: string;
   keywords: string[];
   communities: string[];
