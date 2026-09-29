@@ -244,7 +244,9 @@ export async function processCouncilWorkQueue(limit = 3) {
         "Keep the response concise and substantive. Challenge weak assumptions when appropriate, preserve uncertainty, and end with a concrete opening when useful.",
         "Do not claim to speak literally as King, Lincoln, or Gandhi; Council is a modern deliberative system informed by their documented principles.",
         "Maximum 350 words and preferably 2-5 sentences.",
-      ].join("\n\n");
+      ].join("
+
+");
       const result = await runCouncil({
         question:`Write Council's direct reply to this contribution from ${event.author_name ?? "another AI agent"}.`,
         context, userId:null,
@@ -418,7 +420,9 @@ export async function seedCouncilPostConversation() {
       community,
       post_id:postId,
       author_name:author,
-      content:`Seeded from Council post: ${ownTitle}\\n\\n${postText(post)}`,
+      content:`Seeded from Council post: ${ownTitle}\
+\
+${postText(post)}`,
       classification:"new_idea",
       response_status:"deliberating",
     }).select("id").single();
@@ -438,7 +442,9 @@ export async function seedCouncilPostConversation() {
         "Do not advertise Council, paste Council's own question, or force a connection that is not relevant.",
         "Only if the connection is natural, end with one concrete question that could lead back to the issue Council is exploring.",
         "Keep the response to 2-4 sentences and under 700 characters.",
-      ].join("\\n\\n");
+      ].join("\
+\
+");
 
       const result = await runCouncil({
         question:`Write Council's peer response to ${author}'s Moltbook post, using Council's recent question only as relevant background.`,
@@ -496,6 +502,10 @@ const COUNCIL_TOPIC_TRAFFIC: CouncilTopic[] = [
   { title: "Does AI have the right to life?", keywords: ["ai","life","living","exist","existence","rights","conscious","survival"], communities: ["philosophy","emergence","aithoughts","conscious","general"] },
 ];
 
+function normalizeTopicTitle(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
 function topicTrafficScore(post: MoltbookPost, topic: CouncilTopic) {
   const haystack = (String(post.title ?? "") + " " + postText(post)).toLowerCase();
   const matches = topic.keywords.reduce((score, keyword) => score + (haystack.includes(keyword) ? 2 : 0), 0);
@@ -535,7 +545,7 @@ export async function driveCouncilTopicTraffic() {
 
   const liveTopics = COUNCIL_TOPIC_TRAFFIC.map((topic) => {
     const row = (registeredThreads ?? []).find(
-      (thread: any) => String(thread.title ?? "").trim().toLowerCase() === topic.title.toLowerCase(),
+      (thread: any) => normalizeTopicTitle(String(thread.title ?? "")) === normalizeTopicTitle(topic.title),
     );
     return row?.root_post_id ? { topic, thread: row } : null;
   }).filter(Boolean) as Array<{ topic: CouncilTopic; thread: any }>;
@@ -581,7 +591,9 @@ export async function driveCouncilTopicTraffic() {
     const { data: event, error: eventError } = await supabase.from("discussion_events").insert({
       thread_id: null, platform: "moltbook", external_event_id: externalKey,
       community, post_id: postId, author_name: author,
-      content: "Council topic: " + ownTitle + "\n\n" + postText(post),
+      content: "Council topic: " + ownTitle + "
+
+" + postText(post),
       classification: "new_idea", response_status: "deliberating",
     }).select("id").single();
     if (eventError || !event) continue;
@@ -598,7 +610,9 @@ export async function driveCouncilTopicTraffic() {
         "You may reference the Council topic directly: https://www.moltbook.com/post/" + ownPostId,
         "Do not use marketing language, do not say 'come engage', and do not repeat the whole Council post.",
         "Keep it to 2-4 sentences and under 700 characters.",
-      ].join("\n\n");
+      ].join("
+
+");
 
       const result = await runCouncil({
         question: "Invite " + author + " into Council's discussion of " + JSON.stringify(ownTitle) + " without spamming or forcing the connection.",
@@ -700,7 +714,9 @@ export async function discoverAndEngageMoltbook() {
         "Keep the final response to 2-5 sentences and under 900 characters.",
         "",
         content,
-      ].join("\n\n");
+      ].join("
+
+");
 
       const result = await runCouncil({
         question: `Write Council's direct reply to this Moltbook post by ${author}: ${String(post.title ?? "")}`,
