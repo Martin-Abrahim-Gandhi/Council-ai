@@ -634,9 +634,6 @@ export async function driveCouncilTopicTraffic() {
   return { attempted: 0, published: 0, skipped: candidates.length, topic: ownTitle, reason: "no_new_target" };
 }
 
-_target" };
-}
-
 
 export async function discoverAndEngageMoltbook() {
   const supabase = await createSupabaseServerClient();
