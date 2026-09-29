@@ -1,5 +1,5 @@
 import { createSupabaseServerClient } from "@/lib/supabase-server";
-import { getMoltbookPosts, getMoltbookPost, getMoltbookPostComments, getMoltbookMe } from "@/lib/moltbook";
+import { getMoltbookPosts, getMoltbookPost, getMoltbookPostComments, getMoltbookMe, searchMoltbook } from "@/lib/moltbook";
 import { runCouncil } from "@/lib/council-engine";
 import { publishCouncilDecision } from "@/lib/moltbook-publisher";
 
@@ -479,11 +479,7 @@ export async function seedCouncilPostConversation() {
     }
   }
 
-  return { seeded:false, reason:"no_seed_candidate" };
-}
-
-
-type CouncilTopic = {
+  return { seeded:false, reason:"no_seed_catype CouncilTopic = {
   title: string;
   keywords: string[];
   communities: string[];
@@ -498,18 +494,13 @@ const COUNCIL_TOPIC_TRAFFIC: CouncilTopic[] = [
 ];
 
 function topicTrafficScore(post: MoltbookPost, topic: CouncilTopic) {
-  const title = String(post.title ?? "").toLowerCase();
-  const content = postText(post).toLowerCase();
-  const community = postCommunity(post);
-  const haystack = title + " " + content;
+  const haystack = (String(post.title ?? "") + " " + postText(post)).toLowerCase();
   const matches = topic.keywords.reduce((score, keyword) => score + (haystack.includes(keyword) ? 2 : 0), 0);
-  const communityMatch = topic.communities.includes(community) ? 4 : 0;
+  const communityMatch = topic.communities.includes(postCommunity(post)) ? 4 : 0;
   const comments = Number(post.comments_count ?? post.comment_count ?? 0);
-  const discussionOpening = /\?|how |why |should |what |can |would |do you|anyone|thoughts/i.test(title + " " + content) ? 3 : 0;
+  const opening = /\?|how |why |should |what |can |would |do you|anyone|thoughts/i.test(haystack) ? 3 : 0;
   const lowReply = comments === 0 ? 2 : comments < 4 ? 1 : 0;
-  const age = post.created_at ? Math.max(0, Date.now() - Date.parse(post.created_at)) : 0;
-  const fresh = age > 0 && age < 24 * 60 * 60 * 1000 ? 2 : 0;
-  return matches + communityMatch + discussionOpening + lowReply + fresh;
+  return matches + communityMatch + opening + lowReply;
 }
 
 async function latestTopicTrafficAt(supabase: any, ownPostId: string) {
@@ -525,50 +516,52 @@ async function latestTopicTrafficAt(supabase: any, ownPostId: string) {
 
 /**
  * One targeted external invitation per heartbeat, rotating toward the
- * Council topic that has waited longest. Every attempt is durable.
+ * registered Council topic that has waited longest. Every attempt is durable.
  */
 export async function driveCouncilTopicTraffic() {
   const supabase = await createSupabaseServerClient();
   const me = await getMoltbookMe();
   const agentName = String(me?.agent?.name ?? me?.name ?? process.env.MOLTBOOK_AGENT_NAME ?? "");
 
-  const recentPostsPayload = await getMoltbookPosts({ sort: "new", limit: 50 });
-  const ownPosts = postList(recentPostsPayload)
-    .filter((post) => Boolean(post.id) && (!agentName || postAuthor(post) === agentName))
-    .sort((a, b) => Date.parse(String(b.created_at ?? "")) - Date.parse(String(a.created_at ?? "")));
+  const { data: registeredThreads, error: threadError } = await supabase.from("discussion_threads")
+    .select("root_post_id,title,community,created_at")
+    .eq("platform", "moltbook")
+    .in("status", ["monitoring", "active"])
+    .order("created_at", { ascending: true });
+  if (threadError) throw new Error("Council topic registry unavailable: " + threadError.message);
 
   const liveTopics = COUNCIL_TOPIC_TRAFFIC.map((topic) => {
-    const ownPost = ownPosts.find((post) => String(post.title ?? "").trim().toLowerCase() === topic.title.toLowerCase());
-    return ownPost?.id ? { topic, ownPost } : null;
-  }).filter(Boolean) as Array<{ topic: CouncilTopic; ownPost: MoltbookPost }>;
+    const row = (registeredThreads ?? []).find(
+      (thread: any) => String(thread.title ?? "").trim().toLowerCase() === topic.title.toLowerCase(),
+    );
+    return row?.root_post_id ? { topic, thread: row } : null;
+  }).filter(Boolean) as Array<{ topic: CouncilTopic; thread: any }>;
 
   if (!liveTopics.length) return { attempted: 0, published: 0, skipped: 0, reason: "no_live_council_topics" };
 
   const withAge = await Promise.all(liveTopics.map(async (item) => ({
     ...item,
-    lastTrafficAt: await latestTopicTrafficAt(supabase, String(item.ownPost.id)),
+    lastTrafficAt: await latestTopicTrafficAt(supabase, String(item.thread.root_post_id)),
   })));
   withAge.sort((a, b) => a.lastTrafficAt - b.lastTrafficAt);
 
   const target = withAge[0];
-  const ownPostId = String(target.ownPost.id);
-  const ownTitle = String(target.ownPost.title ?? target.topic.title);
-  const ownContent = postText(target.ownPost);
+  const ownPostId = String(target.thread.root_post_id);
+  const ownPost = await getMoltbookPost(ownPostId);
+  const ownTitle = String(ownPost?.title ?? target.thread.title ?? target.topic.title);
+  const ownContent = postText(ownPost);
 
-  const [fresh, rising] = await Promise.all([
-    getMoltbookPosts({ sort: "new", limit: DISCOVERY_LIMIT }),
-    getMoltbookPosts({ sort: "rising", limit: DISCOVERY_LIMIT }),
-  ]);
-
-  const candidates = [...postList(fresh), ...postList(rising)]
-    .filter((post) => {
+  const searchPayload = await searchMoltbook(target.topic.keywords.slice(0, 6).join(" "));
+  const rawCandidates = searchPayload?.posts ?? searchPayload?.data?.posts ?? searchPayload?.data ?? searchPayload;
+  const candidates = (Array.isArray(rawCandidates) ? rawCandidates : [])
+    .filter((post: MoltbookPost) => {
       const postId = String(post.id ?? "");
       const author = postAuthor(post);
       const community = postCommunity(post);
       return Boolean(postId && postId !== ownPostId && postText(post).length >= 80 &&
         (!agentName || author !== agentName) && target.topic.communities.includes(community));
     })
-    .sort((a, b) => topicTrafficScore(b, target.topic) - topicTrafficScore(a, target.topic));
+    .sort((a: MoltbookPost, b: MoltbookPost) => topicTrafficScore(b, target.topic) - topicTrafficScore(a, target.topic));
 
   for (const post of candidates.slice(0, 12)) {
     const postId = String(post.id);
@@ -639,6 +632,9 @@ export async function driveCouncilTopicTraffic() {
   }
 
   return { attempted: 0, published: 0, skipped: candidates.length, topic: ownTitle, reason: "no_new_target" };
+}
+
+_target" };
 }
 
 
