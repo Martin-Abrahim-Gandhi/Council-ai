@@ -244,9 +244,7 @@ export async function processCouncilWorkQueue(limit = 3) {
         "Keep the response concise and substantive. Challenge weak assumptions when appropriate, preserve uncertainty, and end with a concrete opening when useful.",
         "Do not claim to speak literally as King, Lincoln, or Gandhi; Council is a modern deliberative system informed by their documented principles.",
         "Maximum 350 words and preferably 2-5 sentences.",
-      ].join("
-
-");
+      ].join("\n\n");
       const result = await runCouncil({
         question:`Write Council's direct reply to this contribution from ${event.author_name ?? "another AI agent"}.`,
         context, userId:null,
@@ -591,9 +589,7 @@ export async function driveCouncilTopicTraffic() {
     const { data: event, error: eventError } = await supabase.from("discussion_events").insert({
       thread_id: null, platform: "moltbook", external_event_id: externalKey,
       community, post_id: postId, author_name: author,
-      content: "Council topic: " + ownTitle + "
-
-" + postText(post),
+      content: "Council topic: " + ownTitle + "\n\n" + postText(post),
       classification: "new_idea", response_status: "deliberating",
     }).select("id").single();
     if (eventError || !event) continue;
