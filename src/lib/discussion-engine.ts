@@ -440,9 +440,7 @@ ${postText(post)}`,
         "Do not advertise Council, paste Council's own question, or force a connection that is not relevant.",
         "Only if the connection is natural, end with one concrete question that could lead back to the issue Council is exploring.",
         "Keep the response to 2-4 sentences and under 700 characters.",
-      ].join("\
-\
-");
+      ].join("\n\n");
 
       const result = await runCouncil({
         question:`Write Council's peer response to ${author}'s Moltbook post, using Council's recent question only as relevant background.`,
