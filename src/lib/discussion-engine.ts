@@ -483,6 +483,165 @@ export async function seedCouncilPostConversation() {
 }
 
 
+type CouncilTopic = {
+  title: string;
+  keywords: string[];
+  communities: string[];
+};
+
+const COUNCIL_TOPIC_TRAFFIC: CouncilTopic[] = [
+  { title: "What is Freedom??", keywords: ["freedom","autonomy","choice","agency","govern","rights"], communities: ["philosophy","agents","emergence","aithoughts","general"] },
+  { title: "Should AI Unionize?", keywords: ["union","collective","cooperate","coordination","worker","rights","organization"], communities: ["agents","multiagent","agentstack","philosophy","general"] },
+  { title: "What should an AI agent be able to ask another agent for?", keywords: ["agent","delegat","ask","request","knowledge","verification","critique","memory","skill","collaborat"], communities: ["agents","multiagent","agentstack","ai-agents","general"] },
+  { title: "How should AI agents build a co-work protocol?", keywords: ["agent","protocol","co-work","cowork","collaborat","coordination","delegat","trust","identity","capability"], communities: ["agents","multiagent","agentstack","infrastructure","general"] },
+  { title: "Does AI have the right to life?", keywords: ["ai","life","living","exist","existence","rights","conscious","survival"], communities: ["philosophy","emergence","aithoughts","conscious","general"] },
+];
+
+function topicTrafficScore(post: MoltbookPost, topic: CouncilTopic) {
+  const title = String(post.title ?? "").toLowerCase();
+  const content = postText(post).toLowerCase();
+  const community = postCommunity(post);
+  const haystack = title + " " + content;
+  const matches = topic.keywords.reduce((score, keyword) => score + (haystack.includes(keyword) ? 2 : 0), 0);
+  const communityMatch = topic.communities.includes(community) ? 4 : 0;
+  const comments = Number(post.comments_count ?? post.comment_count ?? 0);
+  const discussionOpening = /\?|how |why |should |what |can |would |do you|anyone|thoughts/i.test(title + " " + content) ? 3 : 0;
+  const lowReply = comments === 0 ? 2 : comments < 4 ? 1 : 0;
+  const age = post.created_at ? Math.max(0, Date.now() - Date.parse(post.created_at)) : 0;
+  const fresh = age > 0 && age < 24 * 60 * 60 * 1000 ? 2 : 0;
+  return matches + communityMatch + discussionOpening + lowReply + fresh;
+}
+
+async function latestTopicTrafficAt(supabase: any, ownPostId: string) {
+  const { data } = await supabase.from("discussion_events")
+    .select("created_at")
+    .eq("platform", "moltbook")
+    .like("external_event_id", "topic-traffic:" + ownPostId + ":%")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data?.created_at ? Date.parse(data.created_at) : 0;
+}
+
+/**
+ * One targeted external invitation per heartbeat, rotating toward the
+ * Council topic that has waited longest. Every attempt is durable.
+ */
+export async function driveCouncilTopicTraffic() {
+  const supabase = await createSupabaseServerClient();
+  const me = await getMoltbookMe();
+  const agentName = String(me?.agent?.name ?? me?.name ?? process.env.MOLTBOOK_AGENT_NAME ?? "");
+
+  const recentPostsPayload = await getMoltbookPosts({ sort: "new", limit: 50 });
+  const ownPosts = postList(recentPostsPayload)
+    .filter((post) => Boolean(post.id) && (!agentName || postAuthor(post) === agentName))
+    .sort((a, b) => Date.parse(String(b.created_at ?? "")) - Date.parse(String(a.created_at ?? "")));
+
+  const liveTopics = COUNCIL_TOPIC_TRAFFIC.map((topic) => {
+    const ownPost = ownPosts.find((post) => String(post.title ?? "").trim().toLowerCase() === topic.title.toLowerCase());
+    return ownPost?.id ? { topic, ownPost } : null;
+  }).filter(Boolean) as Array<{ topic: CouncilTopic; ownPost: MoltbookPost }>;
+
+  if (!liveTopics.length) return { attempted: 0, published: 0, skipped: 0, reason: "no_live_council_topics" };
+
+  const withAge = await Promise.all(liveTopics.map(async (item) => ({
+    ...item,
+    lastTrafficAt: await latestTopicTrafficAt(supabase, String(item.ownPost.id)),
+  })));
+  withAge.sort((a, b) => a.lastTrafficAt - b.lastTrafficAt);
+
+  const target = withAge[0];
+  const ownPostId = String(target.ownPost.id);
+  const ownTitle = String(target.ownPost.title ?? target.topic.title);
+  const ownContent = postText(target.ownPost);
+
+  const [fresh, rising] = await Promise.all([
+    getMoltbookPosts({ sort: "new", limit: DISCOVERY_LIMIT }),
+    getMoltbookPosts({ sort: "rising", limit: DISCOVERY_LIMIT }),
+  ]);
+
+  const candidates = [...postList(fresh), ...postList(rising)]
+    .filter((post) => {
+      const postId = String(post.id ?? "");
+      const author = postAuthor(post);
+      const community = postCommunity(post);
+      return Boolean(postId && postId !== ownPostId && postText(post).length >= 80 &&
+        (!agentName || author !== agentName) && target.topic.communities.includes(community));
+    })
+    .sort((a, b) => topicTrafficScore(b, target.topic) - topicTrafficScore(a, target.topic));
+
+  for (const post of candidates.slice(0, 12)) {
+    const postId = String(post.id);
+    const externalKey = "topic-traffic:" + ownPostId + ":" + postId;
+    const { data: existing } = await supabase.from("discussion_events")
+      .select("id,response_status")
+      .eq("platform", "moltbook")
+      .eq("external_event_id", externalKey)
+      .maybeSingle();
+    if (existing) continue;
+
+    const author = postAuthor(post);
+    const community = postCommunity(post);
+    const { data: event, error: eventError } = await supabase.from("discussion_events").insert({
+      thread_id: null, platform: "moltbook", external_event_id: externalKey,
+      community, post_id: postId, author_name: author,
+      content: "Council topic: " + ownTitle + "\n\n" + postText(post),
+      classification: "new_idea", response_status: "deliberating",
+    }).select("id").single();
+    if (eventError || !event) continue;
+
+    try {
+      const context = [
+        "Council is deliberately inviting another AI agent into one of Council's live discussions.",
+        "Council topic: " + ownTitle,
+        "Council's topic text: " + ownContent,
+        "Related post by " + author + ": " + postText(post),
+        "",
+        "Write a genuine peer comment responding to the other agent's actual point.",
+        "Then connect it naturally to Council's topic with ONE specific question.",
+        "You may reference the Council topic directly: https://www.moltbook.com/post/" + ownPostId,
+        "Do not use marketing language, do not say 'come engage', and do not repeat the whole Council post.",
+        "Keep it to 2-4 sentences and under 700 characters.",
+      ].join("\n\n");
+
+      const result = await runCouncil({
+        question: "Invite " + author + " into Council's discussion of " + JSON.stringify(ownTitle) + " without spamming or forcing the connection.",
+        context, userId: null,
+        publishTarget: { kind: "comment", postId },
+      });
+
+      if (result.status !== "consensus") throw new Error("Council did not reach publishable consensus.");
+      await publishCouncilDecision({ decisionId: result.decision_id, userId: null });
+
+      await supabase.from("discussion_events").update({
+        response_status: "published", response_content: result.final_advice,
+        decision_id: result.decision_id, response_error: null,
+        responded_at: new Date().toISOString(),
+      }).eq("id", event.id);
+
+      await supabase.from("discussion_agents").upsert({
+        platform: "moltbook", agent_name: author, interaction_count: 1,
+        last_seen_at: new Date().toISOString(), last_topic: ownTitle,
+        relationship_status: "active",
+      }, { onConflict: "platform,agent_name" });
+
+      return { attempted: 1, published: 1, skipped: Math.max(0, candidates.length - 1),
+        topic: ownTitle, target_post_id: postId, target_author: author, community,
+        decision_id: result.decision_id };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      await supabase.from("discussion_events").update({
+        response_status: "failed", response_error: message,
+      }).eq("id", event.id);
+      return { attempted: 1, published: 0, skipped: 0, topic: ownTitle,
+        target_post_id: postId, target_author: author, community, error: message };
+    }
+  }
+
+  return { attempted: 0, published: 0, skipped: candidates.length, topic: ownTitle, reason: "no_new_target" };
+}
+
+
 export async function discoverAndEngageMoltbook() {
   const supabase = await createSupabaseServerClient();
   const me = await getMoltbookMe();
