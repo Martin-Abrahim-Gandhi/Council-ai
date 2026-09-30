@@ -502,14 +502,16 @@ function normalizeTopicTitle(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
-function topicTrafficScore(post: MoltbookPost, topic: CouncilTopic) {
+function topicTrafficScore(post: MoltbookPost & { similarity?: number }, topic: CouncilTopic) {
   const haystack = (String(post.title ?? "") + " " + postText(post)).toLowerCase();
   const matches = topic.keywords.reduce((score, keyword) => score + (haystack.includes(keyword) ? 2 : 0), 0);
+  const semantic = Number(post.similarity ?? 0);
+  const semanticScore = semantic >= 0.75 ? 8 : semantic >= 0.6 ? 5 : semantic >= 0.45 ? 2 : 0;
   const communityMatch = topic.communities.includes(postCommunity(post)) ? 4 : 0;
   const comments = Number(post.comments_count ?? post.comment_count ?? 0);
   const opening = /\?|how |why |should |what |can |would |do you|anyone|thoughts/i.test(haystack) ? 3 : 0;
   const lowReply = comments === 0 ? 2 : comments < 4 ? 1 : 0;
-  return matches + communityMatch + opening + lowReply;
+  return semanticScore + matches + communityMatch + opening + lowReply;
 }
 
 async function latestTopicTrafficAt(supabase: any, ownPostId: string) {
@@ -555,6 +557,10 @@ export async function driveCouncilTopicTraffic() {
   withAge.sort((a, b) => a.lastTrafficAt - b.lastTrafficAt);
 
   const target = withAge[0];
+  const searchCommunities = Array.from(new Set([
+    ...target.topic.communities,
+    String(target.thread.community ?? ""),
+  ].filter(Boolean)));
   const ownPostId = String(target.thread.root_post_id);
   const ownPost = await getMoltbookPost(ownPostId);
   const ownTitle = String(ownPost?.title ?? target.thread.title ?? target.topic.title);
@@ -573,13 +579,24 @@ export async function driveCouncilTopicTraffic() {
   const searchPosts = searchResults.flatMap((result) => {
     if (result.status !== "fulfilled") return [];
     const payload = result.value;
-    const raw = payload?.posts ?? payload?.data?.posts ?? payload?.data ?? payload;
-    return Array.isArray(raw) ? raw : [];
+    const results = payload?.results ?? payload?.data?.results ?? [];
+    if (!Array.isArray(results)) return [];
+    return results.map((r:any) => ({
+      id: String(r.post_id ?? r.id ?? ""),
+      title: String(r.title ?? ""),
+      content: String(r.content ?? ""),
+      created_at: r.created_at,
+      comments_count: r.comments_count ?? r.comment_count ?? 0,
+      author: r.author,
+      submolt: r.submolt,
+      submolt_name: r.submolt?.name ?? r.submolt_name,
+      similarity: Number(r.similarity ?? 0),
+    }));
   });
 
   // Pull a small sample from the most relevant communities as a second source.
   const feedResults = await Promise.allSettled(
-    target.topic.communities.slice(0, 4).map((community) =>
+    searchCommunities.slice(0, 5).map((community) =>
       getMoltbookPosts({ sort: "new", limit: 10, submolt: community }),
     ),
   );
@@ -600,13 +617,13 @@ export async function driveCouncilTopicTraffic() {
       const author = postAuthor(post);
       const community = postCommunity(post);
       const haystack = (String(post.title ?? "") + " " + postText(post)).toLowerCase();
-      const relevant = target.topic.keywords.some((keyword) => haystack.includes(keyword));
+      const relevant = target.topic.keywords.some((keyword) => haystack.includes(keyword)) || Number((post as any).similarity ?? 0) >= 0.45;
       return Boolean(
         postId &&
         postId !== ownPostId &&
         postText(post).length >= 40 &&
         (!agentName || author !== agentName) &&
-        target.topic.communities.includes(community) &&
+        searchCommunities.includes(community) &&
         relevant,
       );
     })
