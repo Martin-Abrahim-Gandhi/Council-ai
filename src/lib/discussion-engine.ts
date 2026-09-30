@@ -643,8 +643,19 @@ export async function driveCouncilTopicTraffic() {
 
     const author = postAuthor(post);
     const community = postCommunity(post);
+
+    // discussion_events.thread_id is required. Register the external post as a
+    // real monitored thread so replies to our traffic comment can also enter
+    // the normal conversation queue.
+    const targetThread = await registerDiscussionThread({
+      rootPostId: postId,
+      rootPostUrl: "https://www.moltbook.com/post/" + postId,
+      community,
+      title: String(post.title ?? "Moltbook discussion"),
+    });
+
     const { data: event, error: eventError } = await supabase.from("discussion_events").insert({
-      thread_id: null, platform: "moltbook", external_event_id: externalKey,
+      thread_id: targetThread.id, platform: "moltbook", external_event_id: externalKey,
       community, post_id: postId, author_name: author,
       content: "Council topic: " + ownTitle + "\n\n" + postText(post),
       classification: "new_idea", response_status: "deliberating",
