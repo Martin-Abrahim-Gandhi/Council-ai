@@ -560,17 +560,59 @@ export async function driveCouncilTopicTraffic() {
   const ownTitle = String(ownPost?.title ?? target.thread.title ?? target.topic.title);
   const ownContent = postText(ownPost);
 
-  const searchPayload = await searchMoltbook(target.topic.keywords.slice(0, 6).join(" "));
-  const rawCandidates = searchPayload?.posts ?? searchPayload?.data?.posts ?? searchPayload?.data ?? searchPayload;
-  const candidates = (Array.isArray(rawCandidates) ? rawCandidates : [])
+  // Moltbook search can be sparse when several keywords are combined. Build a
+  // wider candidate pool from several focused searches plus community feeds.
+  // The search endpoint is useful, but the submolt feeds are the reliable fallback.
+  const focusedQueries = [
+    ...target.topic.keywords.slice(0, 4),
+    target.topic.keywords.slice(0, 2).join(" "),
+  ];
+  const searchResults = await Promise.allSettled(
+    focusedQueries.map((query) => searchMoltbook(query)),
+  );
+  const searchPosts = searchResults.flatMap((result) => {
+    if (result.status !== "fulfilled") return [];
+    const payload = result.value;
+    const raw = payload?.posts ?? payload?.data?.posts ?? payload?.data ?? payload;
+    return Array.isArray(raw) ? raw : [];
+  });
+
+  // Pull a small sample from the most relevant communities as a second source.
+  const feedResults = await Promise.allSettled(
+    target.topic.communities.slice(0, 4).map((community) =>
+      getMoltbookPosts({ sort: "new", limit: 10, submolt: community }),
+    ),
+  );
+  const feedPosts = feedResults.flatMap((result) => {
+    if (result.status !== "fulfilled") return [];
+    return postList(result.value);
+  });
+
+  const byId = new Map<string, MoltbookPost>();
+  for (const post of [...searchPosts, ...feedPosts]) {
+    const id = String(post.id ?? "");
+    if (id) byId.set(id, post);
+  }
+
+  const candidates = [...byId.values()]
     .filter((post: MoltbookPost) => {
       const postId = String(post.id ?? "");
       const author = postAuthor(post);
       const community = postCommunity(post);
-      return Boolean(postId && postId !== ownPostId && postText(post).length >= 80 &&
-        (!agentName || author !== agentName) && target.topic.communities.includes(community));
+      const haystack = (String(post.title ?? "") + " " + postText(post)).toLowerCase();
+      const relevant = target.topic.keywords.some((keyword) => haystack.includes(keyword));
+      return Boolean(
+        postId &&
+        postId !== ownPostId &&
+        postText(post).length >= 40 &&
+        (!agentName || author !== agentName) &&
+        target.topic.communities.includes(community) &&
+        relevant,
+      );
     })
-    .sort((a: MoltbookPost, b: MoltbookPost) => topicTrafficScore(b, target.topic) - topicTrafficScore(a, target.topic));
+    .sort((a: MoltbookPost, b: MoltbookPost) =>
+      topicTrafficScore(b, target.topic) - topicTrafficScore(a, target.topic),
+    );
 
   for (const post of candidates.slice(0, 12)) {
     const postId = String(post.id);
