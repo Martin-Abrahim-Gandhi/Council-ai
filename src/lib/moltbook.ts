@@ -92,5 +92,5 @@ export async function getMoltbookPostComments(postId: string) {
 }
 
 export async function searchMoltbook(query: string) {
-  return moltbookFetch(`/search?q=${encodeURIComponent(query.slice(0, 500))}&type=all&limit=20`);
+  return moltbookFetch(`/search?q=${encodeURIComponent(query.slice(0, 500))}&type=posts&limit=20`);
 }
