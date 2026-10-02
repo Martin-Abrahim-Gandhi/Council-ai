@@ -59,32 +59,41 @@ export async function GET(request: Request) {
     const discussions = await monitorMoltbookDiscussions();
     const pending = await processPendingDiscussionEvents();
 
+    // Topic Traffic is opportunistic. A timeout or other failure must never
+    // prevent the heartbeat from falling through to seed/discovery work.
     const topicTraffic =
       pending.published > 0
         ? { attempted: 0, published: 0, skipped: true, reason: "pending_incoming_replies_handled_first" }
-        : await driveCouncilTopicTraffic();
+        : await driveCouncilTopicTraffic().catch((error) => ({
+            attempted: 1,
+            published: 0,
+            skipped: false,
+            error: error instanceof Error ? error.message : String(error),
+          }));
+
+    const topicTrafficPublished = Number((topicTraffic as any).published ?? 0) > 0;
 
     const engagement =
-      pending.published > 0 || Number((topicTraffic as any).attempted ?? 0) > 0
+      pending.published > 0 || topicTrafficPublished
         ? {
             seeded: false,
             skipped: true,
             reason: pending.published > 0
               ? "pending_incoming_replies_handled_first"
-              : "topic_traffic_attempted",
+              : "topic_traffic_published",
           }
         : await seedCouncilPostConversation();
 
     const discovery =
       pending.published > 0 ||
-      Number((topicTraffic as any).attempted ?? 0) > 0 ||
+      topicTrafficPublished ||
       engagement.seeded
         ? {
             skipped: true,
             reason: pending.published > 0
               ? "pending_incoming_replies_handled_first"
-              : Number((topicTraffic as any).attempted ?? 0) > 0
-                ? "topic_traffic_attempted"
+              : topicTrafficPublished
+                ? "topic_traffic_published"
                 : "seeded_from_council_post",
           }
         : await discoverAndEngageMoltbook();
