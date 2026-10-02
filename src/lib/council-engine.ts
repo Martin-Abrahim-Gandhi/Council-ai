@@ -234,6 +234,7 @@ async function deliberateVoice(
   question: string,
   context: string,
   foundation: Awaited<ReturnType<typeof loadFoundation>>,
+  timeoutMs = 120_000,
 ): Promise<VoiceResult> {
   const data = foundationForVoice(voice, foundation);
   if (!data.profile) throw new Error(`Missing persona profile for ${voice}`);
@@ -288,7 +289,7 @@ Keep the answer concise. Maximum 150 words. No JSON commentary.`;
   });
 
   const result = jsonObject<Omit<VoiceResult, "voice_id">>(
-    await askModel(system, user, { maxTokens: 500, timeoutMs: 120_000 }),
+    await askModel(system, user, { maxTokens: 500, timeoutMs }),
   );
   return { voice_id: voice, ...result };
 }
@@ -297,6 +298,7 @@ async function synthesize(
   question: string,
   context: string,
   deliberations: VoiceResult[],
+  timeoutMs = 75_000,
 ): Promise<{
   final_advice: string;
   suggested_common_ground: string;
@@ -353,7 +355,7 @@ Maximum 250 words.`;
   return jsonObject(await askModel(
     system,
     JSON.stringify({ question, context: context.slice(0, 3000) }),
-    { maxTokens: 450, timeoutMs: 75_000 },
+    { maxTokens: 450, timeoutMs },
   ));
 }
 
@@ -472,12 +474,13 @@ async function deliberateVoiceWithRetry(
   question: string,
   context: string,
   foundation: Awaited<ReturnType<typeof loadFoundation>>,
+  timeoutMs = 120_000,
 ): Promise<VoiceResult> {
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
       console.log("[council:parcel] voice attempt", { voice, attempt });
-      const result = await deliberateVoice(voice, question, context, foundation);
+      const result = await deliberateVoice(voice, question, context, foundation, timeoutMs);
       if (!isVoiceResult(result)) throw new Error(`Invalid ${voice} deliberation structure.`);
       return result;
     } catch (error) {
@@ -497,12 +500,13 @@ async function synthesizeWithRetry(
   question: string,
   context: string,
   deliberations: VoiceResult[],
+  timeoutMs = 75_000,
 ): Promise<ChamberResult> {
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
       console.log("[council:parcel] chamber attempt", { attempt });
-      const result = await synthesize(question, context, deliberations);
+      const result = await synthesize(question, context, deliberations, timeoutMs);
       if (!isChamberResult(result)) throw new Error("Invalid Council Chamber result structure.");
       return result;
     } catch (error) {
@@ -788,6 +792,7 @@ export async function runCouncil(input: {
   userId: string | null;
   conversationId?: string | null;
   publishTarget?: { kind: "post" | "comment"; postId?: string; commentId?: string };
+  timeoutMs?: number;
 }): Promise<CouncilRunResult> {
   const question = input.question.trim();
   if (!question) throw new Error("Question is required.");
@@ -820,7 +825,7 @@ export async function runCouncil(input: {
 
   try {
     console.log("[council] three voices starting");
-    const deliberations = await Promise.all(VOICES.map((voice) => deliberateVoice(voice, question, input.context ?? "", foundation)));
+    const deliberations = await Promise.all(VOICES.map((voice) => deliberateVoice(voice, question, input.context ?? "", foundation, input.timeoutMs ?? 120_000)));
     console.log("[council] three voices completed");
     const { error: insertError } = await supabase.from("council_deliberations").insert(deliberations.map((d) => ({
       decision_id: decision.id,
@@ -843,7 +848,7 @@ export async function runCouncil(input: {
     if (insertError) throw new Error(`Could not store deliberations: ${insertError.message}`);
 
     console.log("[council] synthesis starting");
-    const synthesis = await synthesize(question, input.context ?? "", deliberations);
+    const synthesis = await synthesize(question, input.context ?? "", deliberations, input.timeoutMs ? Math.min(input.timeoutMs, 60_000) : 75_000);
     console.log("[council] synthesis completed");
     const passed = allGatesPass(synthesis.gate_evaluation);
     const supportPassed = Object.values(synthesis.voice_support).every(Boolean);
