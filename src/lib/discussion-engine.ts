@@ -680,6 +680,9 @@ export async function driveCouncilTopicTraffic() {
         question: "Invite " + author + " into Council's discussion of " + JSON.stringify(ownTitle) + " without spamming or forcing the connection.",
         context, userId: null,
         publishTarget: { kind: "comment", postId },
+        // Topic Traffic is opportunistic: keep one slow NIM call from consuming
+        // the entire heartbeat. The Council engine aborts its NVIDIA fetches.
+        timeoutMs: 45_000,
       });
 
       if (result.status !== "consensus") throw new Error("Council did not reach publishable consensus.");
