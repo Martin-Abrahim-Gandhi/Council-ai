@@ -348,7 +348,6 @@ function candidateScore(post: MoltbookPost) {
 
 
 const SEED_MAX_AGE_MS = 48 * 60 * 60 * 1000;
-const SEED_MAX_REPLIES = 2;
 
 export async function seedCouncilPostConversation() {
   const supabase = await createSupabaseServerClient();
