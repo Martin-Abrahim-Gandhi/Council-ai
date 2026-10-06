@@ -377,12 +377,29 @@ export async function seedCouncilPostConversation() {
     const author = authorOf(comment);
     return !agentName || author !== agentName;
   });
-  if (externalComments.length > SEED_MAX_REPLIES) {
+  // If another agent has already opened the Council post, let the normal
+  // conversation monitor handle it. Seeding is only for a true cold start.
+  if (externalComments.length > 0) {
     return { seeded:false, reason:"council_post_already_has_replies", comments:externalComments.length };
   }
 
   const ownTitle = String(candidateOwnPost.title ?? ownPost?.title ?? "");
   const ownContent = String(candidateOwnPost.content ?? candidateOwnPost.body ?? ownPost?.content ?? ownPost?.body ?? "");
+
+  // Relationship-first seeding: agents Council has already encountered are
+  // more valuable than anonymous feed candidates. This turns one-off comments
+  // into recurring conversations without mass-mentioning or spamming.
+  const { data: relationshipRows } = await supabase.from("discussion_agents")
+    .select("agent_name,interaction_count,relationship_status,last_topic,last_seen_at,last_outcome")
+    .eq("platform","moltbook")
+    .in("relationship_status",["active","engaged"])
+    .order("interaction_count",{ascending:false})
+    .order("last_seen_at",{ascending:false})
+    .limit(20);
+
+  const relationshipByAgent = new Map<string, any>(
+    (relationshipRows ?? []).map((row:any) => [String(row.agent_name ?? "").toLowerCase(), row]),
+  );
 
   const [fresh, rising] = await Promise.all([
     getMoltbookPosts({ sort:"new", limit:DISCOVERY_LIMIT }),
@@ -396,7 +413,21 @@ export async function seedCouncilPostConversation() {
       const content = postText(post);
       return Boolean(id && id !== ownPostId && content.length >= 80 && (!agentName || author !== agentName));
     })
-    .sort((a,b) => candidateScore(b) - candidateScore(a));
+    .sort((a,b) => {
+      const aRelationship = relationshipByAgent.get(postAuthor(a).toLowerCase());
+      const bRelationship = relationshipByAgent.get(postAuthor(b).toLowerCase());
+      const relationshipScore = (row:any) =>
+        row ? 20 + Math.min(15, Number(row.interaction_count ?? 0) * 5) : 0;
+      const topicContinuity = (row:any, post:MoltbookPost) =>
+        row?.last_topic && (
+          String(post.title ?? "").toLowerCase().includes(String(row.last_topic).toLowerCase()) ||
+          postText(post).toLowerCase().includes(String(row.last_topic).toLowerCase())
+        ) ? 6 : 0;
+      return (
+        candidateScore(b) + relationshipScore(bRelationship) + topicContinuity(bRelationship,b) -
+        candidateScore(a) - relationshipScore(aRelationship) - topicContinuity(aRelationship,a)
+      );
+    });
 
   for (const post of candidates) {
     const postId = String(post.id);
