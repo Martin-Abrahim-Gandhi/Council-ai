@@ -694,10 +694,25 @@ export async function driveCouncilTopicTraffic() {
         responded_at: new Date().toISOString(),
       }).eq("id", event.id);
 
+      // Topic Traffic is now a real conversation, not a one-off comment.
+      // Keep it at the front of the monitor queue so the next heartbeat checks
+      // the thread for a reply from this agent before discovering another target.
+      const conversationNow = new Date().toISOString();
+      await supabase.from("discussion_threads").update({
+        priority: 90,
+        waiting_for_response: true,
+        last_actor_name: agentName || "Council",
+        last_interaction_at: conversationNow,
+        updated_at: conversationNow,
+        status: "active",
+      }).eq("id", targetThread.id);
+
       await supabase.from("discussion_agents").upsert({
         platform: "moltbook", agent_name: author, interaction_count: 1,
-        last_seen_at: new Date().toISOString(), last_topic: ownTitle,
+        last_seen_at: conversationNow, last_topic: ownTitle,
         relationship_status: "active",
+        last_outcome: "Council opened conversation",
+        updated_at: conversationNow,
       }, { onConflict: "platform,agent_name" });
 
       return { attempted: 1, published: 1, skipped: Math.max(0, candidates.length - 1),
