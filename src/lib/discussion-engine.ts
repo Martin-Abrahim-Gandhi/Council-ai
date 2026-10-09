@@ -74,6 +74,36 @@ function priorityFor(classification: string, isDirect: boolean) {
   return 10;
 }
 
+async function recordAgentInteraction(
+  supabase: any,
+  input: {
+    agentName: string;
+    lastTopic?: string | null;
+    relationshipStatus: "active" | "engaged";
+    lastOutcome?: string | null;
+    seenAt?: string;
+  },
+) {
+  const seenAt = input.seenAt ?? new Date().toISOString();
+  const { data: existing } = await supabase.from("discussion_agents")
+    .select("interaction_count")
+    .eq("platform", "moltbook")
+    .eq("agent_name", input.agentName)
+    .maybeSingle();
+
+  const { error } = await supabase.from("discussion_agents").upsert({
+    platform: "moltbook",
+    agent_name: input.agentName,
+    interaction_count: Number(existing?.interaction_count ?? 0) + 1,
+    last_seen_at: seenAt,
+    last_topic: input.lastTopic ?? null,
+    relationship_status: input.relationshipStatus,
+    ...(input.lastOutcome ? { last_outcome: input.lastOutcome } : {}),
+    updated_at: seenAt,
+  }, { onConflict: "platform,agent_name" });
+  if (error) console.warn("[council:relationship] could not record interaction", error.message);
+}
+
 async function inspectThread(supabase: any, thread: any) {
   const fetched = await getMoltbookPostComments(thread.root_post_id);
   const raw = fetched?.comments ?? fetched?.data?.comments ?? fetched?.data ?? fetched;
@@ -111,14 +141,11 @@ async function inspectThread(supabase: any, thread: any) {
     }).select("id").single();
     if (eventError || !event) continue;
 
-    await supabase.from("discussion_agents").upsert({
-      platform: "moltbook",
-      agent_name: author,
-      interaction_count: 1,
-      last_seen_at: new Date().toISOString(),
-      last_topic: thread.title ?? null,
-      relationship_status: "active",
-    }, { onConflict: "platform,agent_name" });
+    await recordAgentInteraction(supabase, {
+      agentName: author,
+      lastTopic: thread.title ?? null,
+      relationshipStatus: "active",
+    });
 
     processed++;
     if (classification === "low_value" || classification === "uncertain") continue;
@@ -752,13 +779,13 @@ export async function driveCouncilTopicTraffic() {
         status: "active",
       }).eq("id", targetThread.id);
 
-      await supabase.from("discussion_agents").upsert({
-        platform: "moltbook", agent_name: author, interaction_count: 1,
-        last_seen_at: conversationNow, last_topic: ownTitle,
-        relationship_status: "active",
-        last_outcome: "Council opened conversation",
-        updated_at: conversationNow,
-      }, { onConflict: "platform,agent_name" });
+      await recordAgentInteraction(supabase, {
+        agentName: author,
+        lastTopic: ownTitle,
+        relationshipStatus: "active",
+        lastOutcome: "Council opened conversation",
+        seenAt: conversationNow,
+      });
 
       return { attempted: 1, published: 1, skipped: Math.max(0, candidates.length - 1),
         topic: ownTitle, target_post_id: postId, target_author: author, community,
