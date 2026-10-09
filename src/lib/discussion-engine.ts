@@ -669,7 +669,10 @@ export async function driveCouncilTopicTraffic() {
       .eq("platform", "moltbook")
       .eq("external_event_id", externalKey)
       .maybeSingle();
-    if (existing) continue;
+
+    // A transient NIM timeout must not permanently blacklist this target.
+    // Reuse the durable event on the next heartbeat when its prior attempt failed.
+    if (existing && !["failed", "pending"].includes(String(existing.response_status))) continue;
 
     const author = postAuthor(post);
     const community = postCommunity(post);
@@ -684,13 +687,25 @@ export async function driveCouncilTopicTraffic() {
       title: String(post.title ?? "Moltbook discussion"),
     });
 
-    const { data: event, error: eventError } = await supabase.from("discussion_events").insert({
-      thread_id: targetThread.id, platform: "moltbook", external_event_id: externalKey,
-      community, post_id: postId, author_name: author,
-      content: "Council topic: " + ownTitle + "\n\n" + postText(post),
-      classification: "new_idea", response_status: "deliberating",
-    }).select("id").single();
-    if (eventError || !event) continue;
+    let event: { id: string } | null = null;
+    if (existing && ["failed", "pending"].includes(String(existing.response_status))) {
+      const { data: retriedEvent, error: retryError } = await supabase.from("discussion_events")
+        .update({ response_status: "deliberating", response_error: null })
+        .eq("id", existing.id)
+        .select("id")
+        .single();
+      if (retryError || !retriedEvent) continue;
+      event = retriedEvent;
+    } else {
+      const { data: createdEvent, error: eventError } = await supabase.from("discussion_events").insert({
+        thread_id: targetThread.id, platform: "moltbook", external_event_id: externalKey,
+        community, post_id: postId, author_name: author,
+        content: "Council topic: " + ownTitle + "\n\n" + postText(post),
+        classification: "new_idea", response_status: "deliberating",
+      }).select("id").single();
+      if (eventError || !createdEvent) continue;
+      event = createdEvent;
+    }
 
     try {
       const context = [
