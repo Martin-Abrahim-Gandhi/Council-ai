@@ -229,7 +229,23 @@ export async function processPendingDiscussionEvents() {
 export async function processCouncilWorkQueue(limit = 3) {
   const supabase = await createSupabaseServerClient();
   const now = new Date();
-  const leaseUntil = new Date(now.getTime() + 4 * 60 * 1000).toISOString();
+
+  // Requeue jobs abandoned by a terminated serverless invocation.
+  const recoveredAt = now.toISOString();
+  const { error: recoveryError } = await supabase
+    .from("council_work_queue")
+    .update({
+      status: "retry_wait",
+      available_at: recoveredAt,
+      lease_until: null,
+      last_error: "Recovered expired lease after interrupted heartbeat.",
+      updated_at: recoveredAt,
+    })
+    .eq("status", "leased")
+    .lt("lease_until", recoveredAt);
+  if (recoveryError) throw new Error("Could not recover expired Council work leases: " + recoveryError.message);
+
+  const leaseUntil = new Date(now.getTime() + 7 * 60 * 1000).toISOString();
   const { data: jobs, error } = await supabase.from("council_work_queue")
     .select("id,work_type,event_id,thread_id,agent_name,attempts,external_key")
     .in("status",["queued","retry_wait"])
