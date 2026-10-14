@@ -71,7 +71,12 @@ export async function POST(request: Request) {
       const postUrl = post?.url ?? post?.permalink ?? result?.url ?? null;
 
       if (!postId) {
-        results.push({ submolt, ok: false, verified: false, error: "Moltbook returned no post ID." });
+        results.push({
+          submolt,
+          ok: false,
+          verified: false,
+          error: "Moltbook did not return a published post ID. If it returned a verification challenge, the challenge must be completed before this post can count as published.",
+        });
       } else {
         let verified = false;
         let verificationError: string | null = null;
@@ -84,24 +89,33 @@ export async function POST(request: Request) {
           verificationError = error instanceof Error ? error.message : "Post verification failed.";
         }
 
-        try {
-          await registerDiscussionThread({
-            rootPostId: String(postId),
-            rootPostUrl: postUrl,
-            community: submolt,
-            title,
+        if (verified) {
+          try {
+            await registerDiscussionThread({
+              rootPostId: String(postId),
+              rootPostUrl: postUrl,
+              community: submolt,
+              title,
+            });
+          } catch (threadError) {
+            console.warn("[moltbook:publish] discussion thread registration failed", threadError);
+          }
+          results.push({
+            submolt,
+            ok: true,
+            verified: true,
+            post: { id: String(postId), url: postUrl },
           });
-        } catch (threadError) {
-          console.warn("[moltbook:publish] discussion thread registration failed", threadError);
+        } else {
+          results.push({
+            submolt,
+            ok: false,
+            verified: false,
+            verificationError,
+            error: "Moltbook post was not confirmed by its post ID; it will not be counted as published.",
+            post: { id: String(postId), url: postUrl },
+          });
         }
-
-        results.push({
-          submolt,
-          ok: true,
-          verified,
-          verificationError,
-          post: { id: String(postId), url: postUrl },
-        });
       }
     } catch (error) {
       results.push({
@@ -112,16 +126,16 @@ export async function POST(request: Request) {
       });
     }
 
-    const successful = results.filter((item) => item.ok);
+    const successful = results.filter((item) => item.ok && item.verified);
     if (!successful.length) {
-      return NextResponse.json({ error: "Moltbook rejected the selected community.", results }, { status: 502 });
+      return NextResponse.json({ ok: false, error: "Moltbook did not confirm publication. The post has not been counted as published.", results }, { status: 502 });
     }
 
     return NextResponse.json({
       ok: true,
       results,
       published_count: successful.length,
-      verified_count: successful.filter((item) => item.verified).length,
+      verified_count: successful.length,
     });
   } catch (error) {
     console.error("[moltbook:publish] failed", error);
