@@ -1,5 +1,5 @@
 import { createSupabaseServerClient } from "@/lib/supabase-server";
-import { createMoltbookPost, createMoltbookComment } from "@/lib/moltbook";
+import { createMoltbookPost, createMoltbookComment, getMoltbookPost } from "@/lib/moltbook";
 
 async function resolvePublicationUserId(
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
@@ -31,9 +31,36 @@ export async function publishCouncilDecision(input: { decisionId: string; userId
   if (payload.moltbook_post_id) return { published: true, post_id: payload.moltbook_post_id, already_published: true };
 
   const kind = action.action_kind === "comment" ? "comment" : "post";
-  const { data: existing } = await supabase.from("moltbook_publications").select("moltbook_post_id,moltbook_comment_id,status")
+  const { data: existing } = await supabase.from("moltbook_publications").select("id,moltbook_post_id,moltbook_comment_id,status")
     .eq("decision_id", decision.id).eq("kind",kind).maybeSingle();
-  if (existing?.status === "published" && (existing.moltbook_post_id || existing.moltbook_comment_id)) return { published: true, post_id: existing.moltbook_post_id, comment_id: existing.moltbook_comment_id, already_published: true };
+  if (existing?.status === "published" && (existing.moltbook_post_id || existing.moltbook_comment_id)) {
+    return { published: true, post_id: existing.moltbook_post_id, comment_id: existing.moltbook_comment_id, already_published: true };
+  }
+
+  // A post ID can be recorded before visibility verification finishes. Re-check that ID
+  // before attempting another create request, so a transient GET failure cannot duplicate a post.
+  if (kind === "post" && existing?.moltbook_post_id) {
+    try {
+      const fetched = await getMoltbookPost(String(existing.moltbook_post_id));
+      const fetchedPost = fetched?.post ?? fetched?.data?.post ?? fetched?.data ?? fetched;
+      if (String(fetchedPost?.id ?? fetchedPost?.post_id ?? "") === String(existing.moltbook_post_id)) {
+        await supabase.from("moltbook_publications").update({
+          status: "published",
+          error: null,
+          response: fetched,
+          published_at: new Date().toISOString(),
+        }).eq("id", existing.id);
+        await supabase.from("council_decisions").update({
+          status: "acted",
+          action_payload: { ...payload, ready_to_publish: false, published: true, moltbook_post_id: String(existing.moltbook_post_id), published_at: new Date().toISOString() },
+        }).eq("id", decision.id);
+        return { published: true, post_id: String(existing.moltbook_post_id), already_published: true, verified: true };
+      }
+    } catch {
+      // Fail closed below; never create a second post while an earlier ID is unresolved.
+    }
+    throw new Error("An earlier Moltbook post ID is saved but cannot yet be verified. Refusing to create a duplicate; retry verification later.");
+  }
 
   const { data: publication, error: publicationInsertError } = await supabase.from("moltbook_publications").upsert({
     user_id: publicationUserId,
@@ -48,6 +75,7 @@ export async function publishCouncilDecision(input: { decisionId: string; userId
 
   if (publicationInsertError) throw new Error(`Could not record Moltbook publication: ${publicationInsertError.message}`);
 
+  let createdPostId: string | null = null;
   try {
     const result = kind === "comment"
       ? await createMoltbookComment({
@@ -58,7 +86,15 @@ export async function publishCouncilDecision(input: { decisionId: string; userId
       : await createMoltbookPost({ title: decision.question, content: decision.final_advice });
     const postId = result?.post?.id ?? result?.data?.post?.id ?? result?.id ?? null;
     const commentId = result?.comment?.id ?? result?.data?.comment?.id ?? (kind === "comment" ? result?.id : null);
-    if (kind === "post" && !postId) throw new Error("Moltbook returned no post id.");
+    if (kind === "post" && !postId) throw new Error("Moltbook returned no post id. If Moltbook requested verification, the challenge must be completed before publication.");
+    if (kind === "post" && postId) {
+      createdPostId = String(postId);
+      const fetched = await getMoltbookPost(createdPostId);
+      const fetchedPost = fetched?.post ?? fetched?.data?.post ?? fetched?.data ?? fetched;
+      if (String(fetchedPost?.id ?? fetchedPost?.post_id ?? "") !== createdPostId) {
+        throw new Error("Moltbook returned a post ID, but the post could not be verified. It will not be counted as published.");
+      }
+    }
     if (kind === "comment" && !commentId) throw new Error("Moltbook returned no comment id.");
     await supabase.from("moltbook_publications").update({ status:"published", moltbook_post_id:postId ? String(postId) : null, moltbook_comment_id:commentId ? String(commentId) : null, response:result, published_at:new Date().toISOString() }).eq("id", publication?.id);
     await supabase.from("council_decisions").update({
@@ -67,7 +103,11 @@ export async function publishCouncilDecision(input: { decisionId: string; userId
     }).eq("id", decision.id);
     return { published: true, post_id: postId ? String(postId) : null, comment_id: commentId ? String(commentId) : null, response: result };
   } catch (error) {
-    await supabase.from("moltbook_publications").update({ status:"failed", error:error instanceof Error ? error.message : String(error) }).eq("id", publication?.id);
+    await supabase.from("moltbook_publications").update({
+      status: createdPostId ? "pending" : "failed",
+      ...(createdPostId ? { moltbook_post_id: createdPostId } : {}),
+      error: error instanceof Error ? error.message : String(error),
+    }).eq("id", publication?.id);
     throw error;
   }
 }
