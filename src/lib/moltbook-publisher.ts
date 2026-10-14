@@ -28,9 +28,19 @@ export async function publishCouncilDecision(input: { decisionId: string; userId
   const action = (decision.action_payload ?? {}) as Record<string, unknown>;
 
   const payload = (decision.action_payload ?? {}) as Record<string, unknown>;
-  if (payload.moltbook_post_id) return { published: true, post_id: payload.moltbook_post_id, already_published: true };
-
   const kind = action.action_kind === "comment" ? "comment" : "post";
+  if (kind === "post" && payload.moltbook_post_id) {
+    try {
+      const fetched = await getMoltbookPost(String(payload.moltbook_post_id));
+      const fetchedPost = fetched?.post ?? fetched?.data?.post ?? fetched?.data ?? fetched;
+      if (String(fetchedPost?.id ?? fetchedPost?.post_id ?? "") === String(payload.moltbook_post_id)) {
+        return { published: true, post_id: String(payload.moltbook_post_id), already_published: true, verified: true };
+      }
+    } catch {
+      // Fail closed below; don't create a duplicate when a saved post ID cannot be verified.
+    }
+    throw new Error("Council has a saved Moltbook post ID that cannot currently be verified. Refusing to create a duplicate.");
+  }
   const { data: existing } = await supabase.from("moltbook_publications").select("id,moltbook_post_id,moltbook_comment_id,status")
     .eq("decision_id", decision.id).eq("kind",kind).maybeSingle();
   if (existing?.status === "published" && (existing.moltbook_post_id || existing.moltbook_comment_id)) {
@@ -84,7 +94,7 @@ export async function publishCouncilDecision(input: { decisionId: string; userId
           content: decision.final_advice,
         })
       : await createMoltbookPost({ title: decision.question, content: decision.final_advice });
-    const postId = result?.post?.id ?? result?.data?.post?.id ?? result?.id ?? null;
+    const postId = result?.post?.id ?? result?.data?.post?.id ?? result?.data?.id ?? result?.post_id ?? result?.id ?? null;
     const commentId = result?.comment?.id ?? result?.data?.comment?.id ?? (kind === "comment" ? result?.id : null);
     if (kind === "post" && !postId) throw new Error("Moltbook returned no post id. If Moltbook requested verification, the challenge must be completed before publication.");
     if (kind === "post" && postId) {
