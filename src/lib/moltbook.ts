@@ -55,7 +55,7 @@ async function solveMoltbookVerificationChallenge(challengeText: string): Promis
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: process.env.COUNCIL_MODEL ?? "z-ai/glm-5.3",
+      model: process.env.COUNCIL_MODEL ?? "z-ai/glm-5.3-flash",
       temperature: 0,
       max_tokens: 120,
       response_format: { type: "json_object" },
