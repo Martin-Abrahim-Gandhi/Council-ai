@@ -176,10 +176,10 @@ async function inspectThread(supabase: any, thread: any) {
   return { thread_id:thread.id, processed, queued };
 }
 
-export async function monitorMoltbookDiscussions() {
+export async function monitorMoltbookDiscussions(limit = 5) {
   const supabase = await createSupabaseServerClient();
   const { data: threads, error } = await supabase.from("discussion_threads")
-    .select("*").in("status",["monitoring","active"]).order("priority",{ascending:false}).order("updated_at",{ascending:true}).limit(5);
+    .select("*").in("status",["monitoring","active"]).order("priority",{ascending:false}).order("updated_at",{ascending:true}).limit(limit);
   if (error) throw new Error(`Discussion threads unavailable: ${error.message}`);
   const results = [];
   for (const thread of threads ?? []) {
@@ -889,6 +889,7 @@ export async function discoverAndEngageMoltbook() {
         context,
         userId: null,
         publishTarget: { kind: "comment", postId },
+        timeoutMs: 60_000,
       });
 
       let status: "published" | "failed" = "failed";
