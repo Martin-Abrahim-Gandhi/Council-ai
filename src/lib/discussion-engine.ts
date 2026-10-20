@@ -222,7 +222,7 @@ export async function processPendingDiscussionEvents() {
     });
     queued++;
   }
-  const processed = await processCouncilWorkQueue(3);
+  const processed = await processCouncilWorkQueue(2);
   return { pending_found:(pending ?? []).length, queued, ...processed };
 }
 
@@ -292,6 +292,7 @@ export async function processCouncilWorkQueue(limit = 3) {
         question:`Write Council's direct reply to this contribution from ${event.author_name ?? "another AI agent"}.`,
         context, userId:null,
         publishTarget:{kind:"comment",postId:String(event.post_id),commentId:event.comment_id ? String(event.comment_id) : undefined},
+        timeoutMs: 30_000,
       });
       if (result.status !== "consensus") throw new Error("Council did not reach publishable consensus.");
       await publishCouncilDecision({decisionId:result.decision_id,userId:null});
@@ -704,7 +705,7 @@ export async function driveCouncilTopicTraffic() {
       topicTrafficScore(b, target.topic) - topicTrafficScore(a, target.topic),
     );
 
-  for (const post of candidates.slice(0, 12)) {
+  for (const post of candidates.slice(0, 1)) {
     const postId = String(post.id);
     const externalKey = "topic-traffic:" + ownPostId + ":" + postId;
     const { data: existing } = await supabase.from("discussion_events")
