@@ -1,10 +1,46 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "crons": [
-    { "path": "/api/cron/moltbook", "schedule": "0 0 * * *" },
-    { "path": "/api/cron/moltbook", "schedule": "0 6 * * *" },
-    { "path": "/api/cron/moltbook", "schedule": "0 12 * * *" },
-    { "path": "/api/cron/moltbook", "schedule": "0 18 * * *" }
+    {
+      "path": "/api/cron/conversations",
+      "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/discovery",
+      "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/topic-traffic",
+      "schedule": "0 4 * * *"
+    },
+    {
+      "path": "/api/cron/conversations",
+      "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/recovery",
+      "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/cron/health",
+      "schedule": "0 10 * * *"
+    },
+    {
+      "path": "/api/cron/conversations",
+      "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/cron/discovery",
+      "schedule": "0 14 * * *"
+    },
+    {
+      "path": "/api/cron/topic-traffic",
+      "schedule": "0 16 * * *"
+    },
+    {
+      "path": "/api/cron/conversations",
+      "schedule": "0 18 * * *"
+    }
   ],
   "version": 2
 }
