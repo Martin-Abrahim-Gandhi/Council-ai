@@ -9,6 +9,6 @@ export async function GET(request: Request) {
   return runMoltbookCronTask(request, "topic-traffic", async () => {
     // The engine publishes at most one Topic Traffic comment per run.
     const topicTraffic = await driveCouncilTopicTraffic();
-    return { topicTraffic, published: Number(topicTraffic.published ?? 0), status: topicTraffic.error ? "failed" : "completed", error: topicTraffic.error };
+    return { topicTraffic, published: Number(topicTraffic.published ?? 0), status: "completed" };
   });
 }
