@@ -8,7 +8,7 @@ export const maxDuration = 180;
 export async function GET(request: Request) {
   return runMoltbookCronTask(request, "conversations", async () => {
     // Incoming replies are handled before any outbound discovery.
-    const discussions = await monitorMoltbookDiscussions(3);
+    const discussions = await monitorMoltbookDiscussions(2);
     const pending = await processPendingDiscussionEvents();
     return { discussions, pending, published: Number(pending.published ?? 0), queue: pending };
   });
