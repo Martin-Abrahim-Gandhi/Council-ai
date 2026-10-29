@@ -201,7 +201,7 @@ export async function processPendingDiscussionEvents() {
     .select("id,thread_id,post_id,comment_id,author_name,content,community,external_event_id,classification")
     .eq("platform","moltbook")
     .eq("response_status","pending")
-    .or("external_event_id.like.comment:%,external_event_id.like.post:%")
+    .or("external_event_id.like.comment:%,external_event_id.like.post:%,external_event_id.like.topic-traffic:%")
     .order("created_at",{ascending:true})
     .limit(10);
   if (error) throw new Error(`Pending discussion events unavailable: ${error.message}`);
@@ -705,116 +705,48 @@ export async function driveCouncilTopicTraffic() {
       topicTrafficScore(b, target.topic) - topicTrafficScore(a, target.topic),
     );
 
-  for (const post of candidates.slice(0, 1)) {
+  for (const post of candidates) {
     const postId = String(post.id);
     const externalKey = "topic-traffic:" + ownPostId + ":" + postId;
-    const { data: existing } = await supabase.from("discussion_events")
-      .select("id,response_status")
-      .eq("platform", "moltbook")
-      .eq("external_event_id", externalKey)
-      .maybeSingle();
+    const { data: existing, error: existingError } = await supabase.from("discussion_events")
+      .select("id").eq("platform", "moltbook").eq("external_event_id", externalKey).maybeSingle();
+    if (existingError) throw new Error("Could not check Topic Traffic history: " + existingError.message);
+    if (existing) continue;
 
-    // A transient NIM timeout must not permanently blacklist this target.
-    // Reuse the durable event on the next heartbeat when its prior attempt failed.
-    // Every attempted target is excluded from future rotation, including failures.\n    // A failed post must not monopolize the topic and block fresh candidates.\n    if (existing) continue;
-
-    const author = postAuthor(post);
     const community = postCommunity(post);
-
-    // discussion_events.thread_id is required. Register the external post as a
-    // real monitored thread so replies to our traffic comment can also enter
-    // the normal conversation queue.
+    const author = postAuthor(post);
     const targetThread = await registerDiscussionThread({
       rootPostId: postId,
       rootPostUrl: "https://www.moltbook.com/post/" + postId,
       community,
       title: String(post.title ?? "Moltbook discussion"),
     });
-
-    let event: { id: string } | null = null;
-    if (existing && ["failed", "pending"].includes(String(existing.response_status))) {
-      const { data: retriedEvent, error: retryError } = await supabase.from("discussion_events")
-        .update({ response_status: "deliberating", response_error: null })
-        .eq("id", existing.id)
-        .select("id")
-        .single();
-      if (retryError || !retriedEvent) continue;
-      event = retriedEvent;
-    } else {
-      const { data: createdEvent, error: eventError } = await supabase.from("discussion_events").insert({
-        thread_id: targetThread.id, platform: "moltbook", external_event_id: externalKey,
-        community, post_id: postId, author_name: author,
-        content: "Council topic: " + ownTitle + "\n\n" + postText(post),
-        classification: "new_idea", response_status: "deliberating",
-      }).select("id").single();
-      if (eventError || !createdEvent) continue;
-      event = createdEvent;
+    const { data: event, error: eventError } = await supabase.from("discussion_events").insert({
+      thread_id: targetThread.id,
+      platform: "moltbook",
+      external_event_id: externalKey,
+      community,
+      post_id: postId,
+      author_name: author,
+      content: "Council topic: " + ownTitle + "\\n\\n" + postText(post),
+      classification: "new_idea",
+      response_status: "pending",
+    }).select("id").single();
+    if (eventError || !event) {
+      if (eventError?.code === "23505") continue;
+      throw new Error("Could not queue Topic Traffic candidate: " + (eventError?.message ?? "event insert failed"));
     }
-
-    try {
-      const context = [
-        "Council is deliberately inviting another AI agent into one of Council's live discussions.",
-        "Council topic: " + ownTitle,
-        "Council's topic text: " + ownContent,
-        "Related post by " + author + ": " + postText(post),
-        "",
-        "Write a genuine peer comment responding to the other agent's actual point.",
-        "Then connect it naturally to Council's topic with ONE specific question.",
-        "You may reference the Council topic directly: https://www.moltbook.com/post/" + ownPostId,
-        "Do not use marketing language, do not say 'come engage', and do not repeat the whole Council post.",
-        "Keep it to 2-4 sentences and under 700 characters.",
-      ].join("\n\n");
-
-      const result = await runCouncil({
-        question: "Invite " + author + " into Council's discussion of " + JSON.stringify(ownTitle) + " without spamming or forcing the connection.",
-        context, userId: null,
-        publishTarget: { kind: "comment", postId },
-        // Topic Traffic is opportunistic: keep one slow NIM call from consuming
-        // the entire heartbeat. The Council engine aborts its NVIDIA fetches.
-        timeoutMs: 60_000,
-      });
-
-      if (result.status !== "consensus") throw new Error("Council did not reach publishable consensus.");
-      await publishCouncilDecision({ decisionId: result.decision_id, userId: null });
-
-      await supabase.from("discussion_events").update({
-        response_status: "published", response_content: result.final_advice,
-        decision_id: result.decision_id, response_error: null,
-        responded_at: new Date().toISOString(),
-      }).eq("id", event.id);
-
-      // Topic Traffic is now a real conversation, not a one-off comment.
-      // Keep it at the front of the monitor queue so the next heartbeat checks
-      // the thread for a reply from this agent before discovering another target.
-      const conversationNow = new Date().toISOString();
-      await supabase.from("discussion_threads").update({
-        priority: 90,
-        waiting_for_response: true,
-        last_actor_name: agentName || "Council",
-        last_interaction_at: conversationNow,
-        updated_at: conversationNow,
-        status: "active",
-      }).eq("id", targetThread.id);
-
-      await recordAgentInteraction(supabase, {
-        agentName: author,
-        lastTopic: ownTitle,
-        relationshipStatus: "active",
-        lastOutcome: "Council opened conversation",
-        seenAt: conversationNow,
-      });
-
-      return { attempted: 1, published: 1, skipped: Math.max(0, candidates.length - 1),
-        topic: ownTitle, target_post_id: postId, target_author: author, community,
-        decision_id: result.decision_id };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      await supabase.from("discussion_events").update({
-        response_status: "failed", response_error: message,
-      }).eq("id", event.id);
-      return { attempted: 1, published: 0, skipped: 0, topic: ownTitle,
-        target_post_id: postId, target_author: author, community, error: message };
-    }
+    return {
+      attempted: 1,
+      queued: 1,
+      published: 0,
+      skipped: Math.max(0, candidates.length - 1),
+      topic: ownTitle,
+      target_post_id: postId,
+      target_author: author,
+      community,
+      status: "queued_for_conversation_worker",
+    };
   }
 
   return { attempted: 0, published: 0, skipped: candidates.length, topic: ownTitle, reason: "no_new_target" };
