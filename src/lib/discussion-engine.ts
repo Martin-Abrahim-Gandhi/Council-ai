@@ -728,7 +728,7 @@ export async function driveCouncilTopicTraffic() {
       community,
       post_id: postId,
       author_name: author,
-      content: "Council topic: " + ownTitle + "\\n\\n" + postText(post),
+      content: "Council topic: " + ownTitle + "\n\n" + postText(post),
       classification: "new_idea",
       response_status: "pending",
     }).select("id").single();
