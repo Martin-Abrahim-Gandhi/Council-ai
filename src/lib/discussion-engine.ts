@@ -222,7 +222,7 @@ export async function processPendingDiscussionEvents() {
     });
     queued++;
   }
-  const processed = await processCouncilWorkQueue(2);
+  const processed = await processCouncilWorkQueue(1);
   return { pending_found:(pending ?? []).length, queued, ...processed };
 }
 
