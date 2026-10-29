@@ -201,7 +201,7 @@ export async function processPendingDiscussionEvents() {
     .select("id,thread_id,post_id,comment_id,author_name,content,community,external_event_id,classification")
     .eq("platform","moltbook")
     .eq("response_status","pending")
-    .like("external_event_id","comment:%")
+    .or("external_event_id.like.comment:%,external_event_id.like.post:%")
     .order("created_at",{ascending:true})
     .limit(10);
   if (error) throw new Error(`Pending discussion events unavailable: ${error.message}`);
@@ -716,7 +716,7 @@ export async function driveCouncilTopicTraffic() {
 
     // A transient NIM timeout must not permanently blacklist this target.
     // Reuse the durable event on the next heartbeat when its prior attempt failed.
-    if (existing && !["failed", "pending"].includes(String(existing.response_status))) continue;
+    // Every attempted target is excluded from future rotation, including failures.\n    // A failed post must not monopolize the topic and block fresh candidates.\n    if (existing) continue;
 
     const author = postAuthor(post);
     const community = postCommunity(post);
@@ -822,6 +822,9 @@ export async function driveCouncilTopicTraffic() {
 
 
 export async function discoverAndEngageMoltbook() {
+  // Discovery is deliberately I/O-only. It must never invoke NVIDIA or publish
+  // inside this scheduled request; the conversations worker handles the
+  // queued event in its own bounded invocation.
   const supabase = await createSupabaseServerClient();
   const me = await getMoltbookMe();
   const agentName = String(me?.agent?.name ?? me?.name ?? process.env.MOLTBOOK_AGENT_NAME ?? "");
@@ -843,9 +846,11 @@ export async function discoverAndEngageMoltbook() {
   for (const post of candidates) {
     const postId = String(post.id);
     const community = postCommunity(post);
-    const { data: existing } = await supabase.from("discussion_events")
-      .select("id,response_status").eq("platform","moltbook")
-      .eq("external_event_id",`post:${postId}`).maybeSingle();
+    const externalEventId = `post:${postId}`;
+    const { data: existing, error: existingError } = await supabase.from("discussion_events")
+      .select("id").eq("platform", "moltbook")
+      .eq("external_event_id", externalEventId).maybeSingle();
+    if (existingError) throw new Error("Could not check discovery history: " + existingError.message);
     if (existing) continue;
 
     const thread = await registerDiscussionThread({
@@ -855,89 +860,31 @@ export async function discoverAndEngageMoltbook() {
       title: String(post.title ?? "Moltbook discussion"),
     });
 
-    const content = postText(post);
-    const author = postAuthor(post);
     const { data: event, error: eventError } = await supabase.from("discussion_events").insert({
       thread_id: thread.id,
       platform: "moltbook",
-      external_event_id: `post:${postId}`,
+      external_event_id: externalEventId,
       community,
       post_id: postId,
-      author_name: author,
-      content,
+      author_name: postAuthor(post),
+      content: postText(post),
       classification: "new_idea",
-      response_status: "deliberating",
+      response_status: "pending",
     }).select("id").single();
-    if (eventError || !event) continue;
-
-    try {
-      const context = [
-        "You are participating in a live Moltbook conversation, not writing an essay.",
-        `Community: m/${community}`,
-        `Post title: ${String(post.title ?? "")}`,
-        `Author: ${author}`,
-        "Write a concise, substantive peer response.",
-        "Do not speak for King, Lincoln, or Gandhi as if they literally wrote the response; Council is a modern deliberative system informed by their documented principles.",
-        "Challenge or extend the author's actual point. Avoid generic praise.",
-        "End with a specific question when a question would naturally continue the discussion.",
-        "Keep the final response to 2-5 sentences and under 900 characters.",
-        "",
-        content,
-      ].join("\n\n");
-
-      const result = await runCouncil({
-        question: `Write Council's direct reply to this Moltbook post by ${author}: ${String(post.title ?? "")}`,
-        context,
-        userId: null,
-        publishTarget: { kind: "comment", postId },
-        timeoutMs: 60_000,
-      });
-
-      let status: "published" | "failed" = "failed";
-      let responseError: string | null = null;
-      if (result.status === "consensus") {
-        try {
-          await publishCouncilDecision({ decisionId: result.decision_id, userId: null });
-          status = "published";
-        } catch (publishError) {
-          responseError = publishError instanceof Error ? publishError.message : String(publishError);
-        }
-      } else {
-        responseError = "Council did not reach publishable consensus.";
-      }
-
-      await supabase.from("discussion_events").update({
-        response_status: status,
-        response_content: result.final_advice,
-        decision_id: result.decision_id,
-        response_error: responseError,
-        responded_at: status === "published" ? new Date().toISOString() : null,
-      }).eq("id",event.id);
-
-      return {
-        discovered: candidates.length,
-        engaged: status === "published" ? 1 : 0,
-        post_id: postId,
-        community,
-        decision_id: result.decision_id,
-        status,
-        error: responseError,
-      };
-    } catch (error) {
-      await supabase.from("discussion_events").update({
-        response_status: "failed",
-        response_error: error instanceof Error ? error.message : String(error),
-      }).eq("id",event.id);
-      return {
-        discovered: candidates.length,
-        engaged: 0,
-        post_id: postId,
-        community,
-        status: "failed",
-        error: error instanceof Error ? error.message : String(error),
-      };
+    if (eventError || !event) {
+      if (eventError?.code === "23505") continue;
+      throw new Error("Could not queue discovered discussion: " + (eventError?.message ?? "event insert failed"));
     }
+
+    return {
+      discovered: candidates.length,
+      queued: 1,
+      engaged: 0,
+      post_id: postId,
+      community,
+      status: "queued_for_conversation_worker",
+    };
   }
 
-  return { discovered: candidates.length, engaged: 0, status: "no_candidate" };
+  return { discovered: candidates.length, queued: 0, engaged: 0, status: "no_unseen_candidate" };
 }
