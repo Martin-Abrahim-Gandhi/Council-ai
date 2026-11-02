@@ -1,5 +1,5 @@
 import { createSupabaseServerClient } from "@/lib/supabase-server";
-import { createMoltbookPost, createMoltbookComment, getMoltbookPost } from "@/lib/moltbook";
+import { createMoltbookPost, createMoltbookComment, getMoltbookPost, getMoltbookPostComments } from "@/lib/moltbook";
 
 async function resolvePublicationUserId(
   supabase: Awaited<ReturnType<typeof createSupabaseServerClient>>,
@@ -45,6 +45,33 @@ export async function publishCouncilDecision(input: { decisionId: string; userId
     .eq("decision_id", decision.id).eq("kind",kind).maybeSingle();
   if (existing?.status === "published" && (existing.moltbook_post_id || existing.moltbook_comment_id)) {
     return { published: true, post_id: existing.moltbook_post_id, comment_id: existing.moltbook_comment_id, already_published: true };
+  }
+
+  // A previous comment POST may have reached Moltbook even if our request timed out.
+  // Search the parent thread before any retry; never blindly create a duplicate reply.
+  if (kind === "comment" && existing && (existing.status === "pending" || existing.status === "failed")) {
+    const parentPostId = String(action.moltbook_parent_post_id ?? "");
+    if (!parentPostId) throw new Error("The saved comment publication has no parent post ID.");
+    try {
+      const payload = await getMoltbookPostComments(parentPostId);
+      const raw = payload?.comments ?? payload?.data?.comments ?? payload?.data ?? payload;
+      const comments = Array.isArray(raw) ? raw : [];
+      const match = comments.find((comment: any) =>
+        String(comment.content ?? comment.body ?? "").trim() === String(decision.final_advice).trim() &&
+        (!action.moltbook_parent_comment_id || String(comment.parent_id ?? "") === String(action.moltbook_parent_comment_id))
+      );
+      if (match?.id) {
+        await supabase.from("moltbook_publications").update({
+          status: "published", moltbook_comment_id: String(match.id), error: null,
+          response: payload, published_at: new Date().toISOString(),
+        }).eq("id", existing.id);
+        await supabase.from("council_decisions").update({ status: "acted" }).eq("id", decision.id);
+        return { published: true, comment_id: String(match.id), already_published: true, verified: true };
+      }
+    } catch (verificationError) {
+      console.warn("[council:publisher] previous comment verification unavailable", verificationError);
+    }
+    throw new Error("A previous Moltbook comment attempt is unresolved. Refusing to create a duplicate reply until it can be verified.");
   }
 
   // A post ID can be recorded before visibility verification finishes. Re-check that ID
@@ -114,7 +141,7 @@ export async function publishCouncilDecision(input: { decisionId: string; userId
     return { published: true, post_id: postId ? String(postId) : null, comment_id: commentId ? String(commentId) : null, response: result };
   } catch (error) {
     await supabase.from("moltbook_publications").update({
-      status: createdPostId ? "pending" : "failed",
+      status: createdPostId || kind === "comment" ? "pending" : "failed",
       ...(createdPostId ? { moltbook_post_id: createdPostId } : {}),
       error: error instanceof Error ? error.message : String(error),
     }).eq("id", publication?.id);
