@@ -248,11 +248,11 @@ export async function processCouncilWorkQueue(limit = 1) {
   const stages = ["king", "lincoln", "gandhi", "chamber"] as const;
 
   for (const job of jobs ?? []) {
-    const attemptNumber = Number(job.attempts ?? 0) + 1;
+    let failureAttempts = Number(job.attempts ?? 0) + 1;
     const leaseAt = new Date().toISOString();
     const { data: leased } = await supabase.from("council_work_queue").update({
       status: "leased", leased_at: leaseAt, lease_until: leaseUntil,
-      attempts: attemptNumber, updated_at: leaseAt,
+      attempts: failureAttempts, updated_at: leaseAt,
     }).eq("id", job.id).in("status", ["queued", "retry_wait"]).select("id").maybeSingle();
     if (!leased) continue;
 
@@ -276,9 +276,7 @@ export async function processCouncilWorkQueue(limit = 1) {
       const previous = (job.result ?? {}) as Record<string, unknown>;
       let decisionId = event.decision_id ? String(event.decision_id)
         : typeof previous.decision_id === "string" ? previous.decision_id : null;
-      const previousStage = typeof previous.parcel_stage === "string" ? previous.parcel_stage : null;
-      const nextIndex = previousStage ? stages.indexOf(previousStage as (typeof stages)[number]) + 1 : 0;
-      const stage = stages[Math.max(0, Math.min(nextIndex, stages.length - 1))];
+      let completedStage = typeof previous.parcel_stage === "string" ? previous.parcel_stage : null;
 
       const context = [
         "This is a pending incoming contribution in a live Moltbook AI discussion.",
@@ -289,11 +287,10 @@ export async function processCouncilWorkQueue(limit = 1) {
         "Do not claim to speak literally as King, Lincoln, or Gandhi; Council is a modern deliberative system informed by their documented principles.",
         "Maximum 350 words and preferably 2-5 sentences.",
       ].join("\n\n");
-
       const question = "Write Council's direct reply to this contribution from " + String(event.author_name ?? "another AI agent") + ".";
-      // Create and attach the decision before calling NVIDIA. If the model request
-      // times out, the next heartbeat resumes this exact decision instead of duplicating it.
-      if (stage === "king" && !decisionId) {
+
+      // Persist the decision before the first model call, so a timeout resumes it.
+      if (!decisionId) {
         let actorUserId = process.env.COUNCIL_AUTONOMOUS_USER_ID?.trim() || "";
         if (!actorUserId) {
           const { data: profiles, error: profileError } = await supabase.from("profiles").select("id").limit(2);
@@ -303,11 +300,9 @@ export async function processCouncilWorkQueue(limit = 1) {
           actorUserId = String(profiles[0].id);
         }
         const { data: createdDecision, error: createError } = await supabase.from("council_decisions").insert({
-          user_id: actorUserId,
-          question,
+          user_id: actorUserId, question,
           context: { text: context, engine_version: "3.0.0", parcel_protocol: true },
-          status: "deliberating",
-          action_type: "reply",
+          status: "deliberating", action_type: "reply",
           action_payload: {
             action_kind: "comment",
             moltbook_parent_post_id: String(event.post_id),
@@ -321,99 +316,127 @@ export async function processCouncilWorkQueue(limit = 1) {
         await supabase.from("discussion_events").update({ decision_id: decisionId }).eq("id", event.id);
       }
 
-      const parcel = await runCouncilParcel({
-        stage,
-        decisionId,
-        question: stage === "king" ? question : undefined,
-        context: stage === "king" ? context : undefined,
-        userId: null,
-        publishTarget: stage === "king" ? {
-          kind: "comment", postId: String(event.post_id),
-          commentId: event.comment_id ? String(event.comment_id) : undefined,
-        } : undefined,
-        timeoutMs: 55_000,
-      });
+      // Two persisted parcels per invocation: bounded below the cron's 180s limit.
+      // Each model call has one attempt; queue-level retries resume the failed stage.
+      let finished = false;
+      for (let step = 0; step < 2; step++) {
+        const stageIndex = completedStage ? stages.indexOf(completedStage as (typeof stages)[number]) + 1 : 0;
+        const stage = stages[Math.max(0, Math.min(stageIndex, stages.length - 1))];
+        const parcel = await runCouncilParcel({
+          stage, decisionId,
+          question: stage === "king" ? question : undefined,
+          context: stage === "king" ? context : undefined,
+          userId: null,
+          publishTarget: stage === "king" ? {
+            kind: "comment", postId: String(event.post_id),
+            commentId: event.comment_id ? String(event.comment_id) : undefined,
+          } : undefined,
+          timeoutMs: 55_000,
+        });
+        decisionId = parcel.decision_id;
+        await supabase.from("discussion_events").update({
+          decision_id: decisionId, response_status: "deliberating", response_error: null,
+        }).eq("id", event.id);
 
-      await supabase.from("discussion_events").update({
-        decision_id: parcel.decision_id, response_status: "deliberating", response_error: null,
-      }).eq("id", event.id);
+        if (!parcel.complete) {
+          completedStage = stage;
+          const stageResult = {
+            decision_id: decisionId, parcel_stage: stage,
+            next_stage: stages[stages.indexOf(stage) + 1] ?? null,
+          };
+          await supabase.from("council_work_queue").update({
+            status: step === 1 ? "queued" : "leased",
+            attempts: 0, available_at: new Date().toISOString(),
+            lease_until: step === 1 ? null : leaseUntil,
+            result: stageResult, last_error: null, updated_at: new Date().toISOString(),
+          }).eq("id", job.id);
+          if (step === 1) {
+            results.push({ id: event.id, status: "deliberating", stage, decision_id: decisionId });
+            finished = true;
+          }
+          continue;
+        }
 
-      if (!parcel.complete) {
+        if (parcel.status !== "consensus") {
+          const message = parcel.status === "awaiting_admin"
+            ? "Council's constitutional gates require administrator review."
+            : "Council did not reach consensus; no reply was published.";
+          await supabase.from("discussion_events").update({
+            response_status: "failed", response_content: parcel.final_advice,
+            decision_id, response_error: message,
+          }).eq("id", event.id);
+          await supabase.from("council_work_queue").update({
+            status: "completed",
+            result: { decision_id, parcel_stage: "chamber", outcome: parcel.status },
+            last_error: message, lease_until: null, updated_at: new Date().toISOString(),
+          }).eq("id", job.id);
+          failed++;
+          results.push({ id: event.id, status: parcel.status, error: message });
+          finished = true;
+          break;
+        }
+
+        const { data: publication } = await supabase.from("moltbook_publications")
+          .select("status,moltbook_comment_id,error").eq("decision_id", decisionId)
+          .eq("kind", "comment").maybeSingle();
+        if (publication?.status !== "published" || !publication.moltbook_comment_id) {
+          const message = publication?.error || "Council reached consensus, but Moltbook has not confirmed the comment publication yet.";
+          await supabase.from("discussion_events").update({
+            response_status: "pending", decision_id, response_error: message,
+          }).eq("id", event.id);
+          await supabase.from("council_work_queue").update({
+            status: "retry_wait", attempts: 0,
+            available_at: new Date(Date.now() + 15 * 60_000).toISOString(),
+            result: { decision_id, parcel_stage: "chamber" },
+            last_error: message, lease_until: null, updated_at: new Date().toISOString(),
+          }).eq("id", job.id);
+          retried++;
+          results.push({ id: event.id, status: "publication_pending", error: message });
+          finished = true;
+          break;
+        }
+
+        await supabase.from("discussion_events").update({
+          response_status: "published", response_content: parcel.final_advice,
+          decision_id, response_error: null, responded_at: new Date().toISOString(),
+        }).eq("id", event.id);
+        await supabase.from("discussion_threads").update({
+          waiting_for_response: false, last_actor_name: String(event.author_name ?? ""),
+          last_interaction_at: new Date().toISOString(), updated_at: new Date().toISOString(), priority: 70,
+        }).eq("id", event.thread_id);
+        await supabase.from("discussion_agents").update({
+          relationship_status: "engaged", last_outcome: "Council replied", updated_at: new Date().toISOString(),
+        }).eq("platform", "moltbook").eq("agent_name", event.author_name);
+        await supabase.from("council_work_queue").update({
+          status: "completed",
+          result: { published: true, decision_id, comment_id: publication.moltbook_comment_id },
+          last_error: null, lease_until: null, updated_at: new Date().toISOString(),
+        }).eq("id", job.id);
+        published++;
+        results.push({ id: event.id, status: "published", comment_id: publication.moltbook_comment_id });
+        finished = true;
+        break;
+      }
+
+      if (!finished) {
         await supabase.from("council_work_queue").update({
           status: "queued", attempts: 0, available_at: new Date().toISOString(),
           lease_until: null,
-          result: { decision_id: parcel.decision_id, parcel_stage: stage,
-            next_stage: stages[stages.indexOf(stage) + 1] ?? null },
+          result: { decision_id: decisionId, parcel_stage: completedStage },
           last_error: null, updated_at: new Date().toISOString(),
         }).eq("id", job.id);
-        results.push({ id: event.id, status: "deliberating", stage, decision_id: parcel.decision_id });
-        continue;
+        results.push({ id: event.id, status: "deliberating", stage: completedStage, decision_id: decisionId });
       }
-
-      if (parcel.status !== "consensus") {
-        const message = parcel.status === "awaiting_admin"
-          ? "Council's constitutional gates require administrator review."
-          : "Council did not reach consensus; no reply was published.";
-        await supabase.from("discussion_events").update({
-          response_status: "failed", response_content: parcel.final_advice,
-          decision_id: parcel.decision_id, response_error: message,
-        }).eq("id", event.id);
-        await supabase.from("council_work_queue").update({
-          status: "completed",
-          result: { decision_id: parcel.decision_id, parcel_stage: "chamber", outcome: parcel.status },
-          last_error: message, lease_until: null, updated_at: new Date().toISOString(),
-        }).eq("id", job.id);
-        failed++;
-        results.push({ id: event.id, status: parcel.status, error: message });
-        continue;
-      }
-
-      const { data: publication } = await supabase.from("moltbook_publications")
-        .select("status,moltbook_comment_id,error").eq("decision_id", parcel.decision_id)
-        .eq("kind", "comment").maybeSingle();
-
-      if (publication?.status !== "published" || !publication.moltbook_comment_id) {
-        const message = publication?.error || "Council reached consensus, but Moltbook has not confirmed the comment publication yet.";
-        await supabase.from("discussion_events").update({
-          response_status: "pending", decision_id: parcel.decision_id, response_error: message,
-        }).eq("id", event.id);
-        await supabase.from("council_work_queue").update({
-          status: "retry_wait", available_at: new Date(Date.now() + 15 * 60_000).toISOString(),
-          result: { decision_id: parcel.decision_id, parcel_stage: "chamber" },
-          last_error: message, lease_until: null, updated_at: new Date().toISOString(),
-        }).eq("id", job.id);
-        retried++;
-        results.push({ id: event.id, status: "publication_pending", error: message });
-        continue;
-      }
-
-      await supabase.from("discussion_events").update({
-        response_status: "published", response_content: parcel.final_advice,
-        decision_id: parcel.decision_id, response_error: null, responded_at: new Date().toISOString(),
-      }).eq("id", event.id);
-      await supabase.from("discussion_threads").update({
-        waiting_for_response: false, last_actor_name: String(event.author_name ?? ""),
-        last_interaction_at: new Date().toISOString(), updated_at: new Date().toISOString(), priority: 70,
-      }).eq("id", event.thread_id);
-      await supabase.from("discussion_agents").update({
-        relationship_status: "engaged", last_outcome: "Council replied", updated_at: new Date().toISOString(),
-      }).eq("platform", "moltbook").eq("agent_name", event.author_name);
-      await supabase.from("council_work_queue").update({
-        status: "completed",
-        result: { published: true, decision_id: parcel.decision_id, comment_id: publication.moltbook_comment_id },
-        last_error: null, lease_until: null, updated_at: new Date().toISOString(),
-      }).eq("id", job.id);
-      published++;
-      results.push({ id: event.id, status: "published", comment_id: publication.moltbook_comment_id });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const retryable = attemptNumber < 3;
-      const available = new Date(Date.now() + Math.min(60 * 60_000, Math.pow(2, attemptNumber) * 5 * 60_000)).toISOString();
+      const retryable = failureAttempts < 3;
+      const available = new Date(Date.now() + Math.min(60 * 60_000, Math.pow(2, failureAttempts) * 5 * 60_000)).toISOString();
       await supabase.from("discussion_events").update({
         response_status: retryable ? "pending" : "failed", response_error: message,
       }).eq("id", event.id);
       await supabase.from("council_work_queue").update({
-        status: retryable ? "retry_wait" : "dead_letter", available_at: available,
+        status: retryable ? "retry_wait" : "dead_letter",
+        attempts: failureAttempts, available_at: available,
         last_error: message, lease_until: null, updated_at: new Date().toISOString(),
       }).eq("id", job.id);
       if (retryable) retried++; else failed++;
