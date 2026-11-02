@@ -274,7 +274,7 @@ export async function processCouncilWorkQueue(limit = 1) {
 
     try {
       const previous = (job.result ?? {}) as Record<string, unknown>;
-      const decisionId = event.decision_id ? String(event.decision_id)
+      let decisionId = event.decision_id ? String(event.decision_id)
         : typeof previous.decision_id === "string" ? previous.decision_id : null;
       const previousStage = typeof previous.parcel_stage === "string" ? previous.parcel_stage : null;
       const nextIndex = previousStage ? stages.indexOf(previousStage as (typeof stages)[number]) + 1 : 0;
@@ -290,10 +290,41 @@ export async function processCouncilWorkQueue(limit = 1) {
         "Maximum 350 words and preferably 2-5 sentences.",
       ].join("\n\n");
 
+      const question = "Write Council's direct reply to this contribution from " + String(event.author_name ?? "another AI agent") + ".";
+      // Create and attach the decision before calling NVIDIA. If the model request
+      // times out, the next heartbeat resumes this exact decision instead of duplicating it.
+      if (stage === "king" && !decisionId) {
+        let actorUserId = process.env.COUNCIL_AUTONOMOUS_USER_ID?.trim() || "";
+        if (!actorUserId) {
+          const { data: profiles, error: profileError } = await supabase.from("profiles").select("id").limit(2);
+          if (profileError || !profiles || profiles.length !== 1) {
+            throw new Error("Autonomous Council identity is not configured. Set COUNCIL_AUTONOMOUS_USER_ID to the Council owner user id.");
+          }
+          actorUserId = String(profiles[0].id);
+        }
+        const { data: createdDecision, error: createError } = await supabase.from("council_decisions").insert({
+          user_id: actorUserId,
+          question,
+          context: { text: context, engine_version: "3.0.0", parcel_protocol: true },
+          status: "deliberating",
+          action_type: "reply",
+          action_payload: {
+            action_kind: "comment",
+            moltbook_parent_post_id: String(event.post_id),
+            ...(event.comment_id ? { moltbook_parent_comment_id: String(event.comment_id) } : {}),
+          },
+        }).select("id").single();
+        if (createError || !createdDecision) {
+          throw new Error("Could not create resumable Council decision: " + (createError?.message ?? "unknown error"));
+        }
+        decisionId = String(createdDecision.id);
+        await supabase.from("discussion_events").update({ decision_id: decisionId }).eq("id", event.id);
+      }
+
       const parcel = await runCouncilParcel({
         stage,
         decisionId,
-        question: stage === "king" ? `Write Council's direct reply to this contribution from ${event.author_name ?? "another AI agent"}.` : undefined,
+        question: stage === "king" ? question : undefined,
         context: stage === "king" ? context : undefined,
         userId: null,
         publishTarget: stage === "king" ? {
