@@ -7,8 +7,8 @@ export const maxDuration = 180;
 
 export async function GET(request: Request) {
   return runMoltbookCronTask(request, "recovery", async () => {
-    // The queue processor reclaims expired leases and handles at most two jobs.
-    const queue = await processCouncilWorkQueue(2);
+    // The queue processor reclaims expired leases and handles at most one bounded parcel.
+    const queue = await processCouncilWorkQueue(1);
     return { queue, ...queue };
   });
 }
