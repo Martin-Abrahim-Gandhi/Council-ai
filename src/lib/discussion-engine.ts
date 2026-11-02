@@ -372,11 +372,11 @@ export async function processCouncilWorkQueue(limit = 1) {
             : "Council did not reach consensus; no reply was published.";
           await supabase.from("discussion_events").update({
             response_status: "failed", response_content: parcel.final_advice,
-            decision_id, response_error: message,
+            decision_id: decisionId, response_error: message,
           }).eq("id", event.id);
           await supabase.from("council_work_queue").update({
             status: "completed",
-            result: { decision_id, parcel_stage: "chamber", outcome: parcel.status },
+            result: { decision_id: decisionId, parcel_stage: "chamber", outcome: parcel.status },
             last_error: message, lease_until: null, updated_at: new Date().toISOString(),
           }).eq("id", job.id);
           failed++;
@@ -391,12 +391,12 @@ export async function processCouncilWorkQueue(limit = 1) {
         if (publication?.status !== "published" || !publication.moltbook_comment_id) {
           const message = publication?.error || "Council reached consensus, but Moltbook has not confirmed the comment publication yet.";
           await supabase.from("discussion_events").update({
-            response_status: "pending", decision_id, response_error: message,
+            response_status: "pending", decision_id: decisionId, response_error: message,
           }).eq("id", event.id);
           await supabase.from("council_work_queue").update({
             status: "retry_wait", attempts: 0,
             available_at: new Date(Date.now() + 15 * 60_000).toISOString(),
-            result: { decision_id, parcel_stage: "chamber" },
+            result: { decision_id: decisionId, parcel_stage: "chamber" },
             last_error: message, lease_until: null, updated_at: new Date().toISOString(),
           }).eq("id", job.id);
           retried++;
@@ -407,7 +407,7 @@ export async function processCouncilWorkQueue(limit = 1) {
 
         await supabase.from("discussion_events").update({
           response_status: "published", response_content: parcel.final_advice,
-          decision_id, response_error: null, responded_at: new Date().toISOString(),
+          decision_id: decisionId, response_error: null, responded_at: new Date().toISOString(),
         }).eq("id", event.id);
         await supabase.from("discussion_threads").update({
           waiting_for_response: false, last_actor_name: String(event.author_name ?? ""),
@@ -418,7 +418,7 @@ export async function processCouncilWorkQueue(limit = 1) {
         }).eq("platform", "moltbook").eq("agent_name", event.author_name);
         await supabase.from("council_work_queue").update({
           status: "completed",
-          result: { published: true, decision_id, comment_id: publication.moltbook_comment_id },
+          result: { published: true, decision_id: decisionId, comment_id: publication.moltbook_comment_id },
           last_error: null, lease_until: null, updated_at: new Date().toISOString(),
         }).eq("id", job.id);
         published++;
