@@ -607,6 +607,7 @@ export async function runCouncilParcel(input: {
   userId: string | null;
   conversationId?: string | null;
   publishTarget?: { kind: "post" | "comment"; postId?: string; commentId?: string };
+  timeoutMs?: number;
 }): Promise<Omit<CouncilRunResult, "status"> & { status: CouncilRunResult["status"] | "deliberating"; stage: CouncilParcelStage; complete: boolean; decision_id: string }> {
   const supabase = await createSupabaseServerClient();
   const actorUserId = await resolveCouncilActorUserId(supabase, input.userId);
@@ -681,6 +682,7 @@ export async function runCouncilParcel(input: {
       decision.question,
       typeof decisionContext.text === "string" ? decisionContext.text : "",
       foundation,
+      input.timeoutMs ?? 120_000,
     );
     await saveVoiceDeliberation(supabase, decision.id, result);
 
@@ -709,6 +711,13 @@ export async function runCouncilParcel(input: {
   if (storedIndex < 2) throw new Error("Council Chamber cannot start until King, Lincoln, and Gandhi are complete.");
 
   if (storedIndex === 3 && decision.final_advice) {
+    if (decision.status === "consensus") {
+      try {
+        await publishCouncilDecision({ decisionId: decision.id, userId: actorUserId });
+      } catch (publishError) {
+        console.warn("Council consensus is ready but Moltbook publication remains pending:", publishError);
+      }
+    }
     const stored = await loadStoredDeliberations(supabase, decision.id);
     const gateSummary = (decision.action_payload?.gate_evaluation ?? {}) as GateEvaluation;
     const voiceSupport = (decision.action_payload?.voice_support ?? { king: false, lincoln: false, gandhi: false }) as Record<VoiceId, boolean>;
@@ -732,6 +741,7 @@ export async function runCouncilParcel(input: {
     decision.question,
     typeof decisionContext.text === "string" ? decisionContext.text : "",
     deliberations,
+    input.timeoutMs ?? 75_000,
   );
   const passed = allGatesPass(synthesis.gate_evaluation);
   const supportPassed = Object.values(synthesis.voice_support).every(Boolean);
