@@ -477,7 +477,7 @@ async function deliberateVoiceWithRetry(
   timeoutMs = 120_000,
 ): Promise<VoiceResult> {
   let lastError: unknown = null;
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
+  for (let attempt = 1; attempt <= 1; attempt += 1) {
     try {
       console.log("[council:parcel] voice attempt", { voice, attempt });
       const result = await deliberateVoice(voice, question, context, foundation, timeoutMs);
@@ -503,7 +503,7 @@ async function synthesizeWithRetry(
   timeoutMs = 75_000,
 ): Promise<ChamberResult> {
   let lastError: unknown = null;
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
+  for (let attempt = 1; attempt <= 1; attempt += 1) {
     try {
       console.log("[council:parcel] chamber attempt", { attempt });
       const result = await synthesize(question, context, deliberations, timeoutMs);
