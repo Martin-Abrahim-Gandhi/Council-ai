@@ -313,7 +313,15 @@ export async function processCouncilWorkQueue(limit = 1) {
           throw new Error("Could not create resumable Council decision: " + (createError?.message ?? "unknown error"));
         }
         decisionId = String(createdDecision.id);
-        await supabase.from("discussion_events").update({ decision_id: decisionId }).eq("id", event.id);
+        const { error: queueLinkError } = await supabase.from("council_work_queue").update({
+          result: { decision_id: decisionId, parcel_stage: null },
+          updated_at: new Date().toISOString(),
+        }).eq("id", job.id);
+        if (queueLinkError) throw new Error("Could not attach decision to its queue job: " + queueLinkError.message);
+        const { error: eventLinkError } = await supabase.from("discussion_events").update({
+          decision_id: decisionId,
+        }).eq("id", event.id);
+        if (eventLinkError) throw new Error("Could not attach decision to its discussion event: " + eventLinkError.message);
       }
 
       // Two persisted parcels per invocation: bounded below the cron's 180s limit.
@@ -334,6 +342,7 @@ export async function processCouncilWorkQueue(limit = 1) {
           timeoutMs: 55_000,
         });
         decisionId = parcel.decision_id;
+        failureAttempts = 1;
         await supabase.from("discussion_events").update({
           decision_id: decisionId, response_status: "deliberating", response_error: null,
         }).eq("id", event.id);
