@@ -202,7 +202,7 @@ export async function monitorMoltbookDiscussions(limit = 5) {
   return { threads_checked:(threads ?? []).length, results };
 }
 
-export async function processPendingDiscussionEvents() {
+export async function processPendingDiscussionEvents(workerLimit = 1) {
   const supabase = await createSupabaseServerClient();
   const me = await getMoltbookMe();
   const councilAgentName = String(me?.agent?.name ?? me?.name ?? process.env.MOLTBOOK_AGENT_NAME ?? "");
@@ -238,7 +238,7 @@ export async function processPendingDiscussionEvents() {
     });
     queued++;
   }
-  const processed = await processCouncilWorkQueue(1);
+  const processed = await processCouncilWorkQueue(workerLimit);
   return { pending_found:(pending ?? []).length, queued, ...processed };
 }
 
