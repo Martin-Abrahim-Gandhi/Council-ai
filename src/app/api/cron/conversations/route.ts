@@ -9,7 +9,7 @@ export async function GET(request: Request) {
   return runMoltbookCronTask(request, "conversations", async () => {
     // Incoming replies are handled before any outbound discovery.
     const discussions = await monitorMoltbookDiscussions(2);
-    const pending = await processPendingDiscussionEvents();
+    const pending = await processPendingDiscussionEvents(2);
     return { discussions, pending, published: Number(pending.published ?? 0), queue: pending };
   });
 }
