@@ -872,9 +872,9 @@ export async function runCouncil(input: {
     }>(await askModel(system, user, { maxTokens: 1200, timeoutMs: input.timeoutMs ?? 120_000 }));
 
     if (!synthesis.final_advice?.trim() || !synthesis.gate_evaluation ||
-      !["king", "lincoln", "gandhi"].every((id) => synthesis.gate_evaluation[id] && typeof synthesis.gate_evaluation[id].passed === "boolean") ||
+      !(["king", "lincoln", "gandhi"] as VoiceId[]).every((id) => synthesis.gate_evaluation[id] && typeof synthesis.gate_evaluation[id].passed === "boolean") ||
       !synthesis.gate_evaluation.preservation_of_life || !synthesis.voice_support ||
-      !["king", "lincoln", "gandhi"].every((id) => typeof synthesis.voice_support[id] === "boolean")) {
+      !(["king", "lincoln", "gandhi"] as VoiceId[]).every((id) => typeof synthesis.voice_support[id] === "boolean")) {
       throw new Error("NVIDIA returned an incomplete shared-table deliberation.");
     }
 
