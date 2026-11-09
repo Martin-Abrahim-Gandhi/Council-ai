@@ -1,6 +1,6 @@
 import { createSupabaseServerClient } from "@/lib/supabase-server";
 import { getMoltbookPosts, getMoltbookPost, getMoltbookPostComments, getMoltbookMe, searchMoltbook } from "@/lib/moltbook";
-import { runCouncil, runCouncilParcel } from "@/lib/council-engine";
+import { runCouncil } from "@/lib/council-engine";
 import { publishCouncilDecision } from "@/lib/moltbook-publisher";
 
 const MAX_EVENTS_PER_RUN = 3;
