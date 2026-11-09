@@ -43,59 +43,33 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
     setRunning(true);
     setError(null);
     setResult(null);
-    setParcelStage("king");
+    setParcelStage("chamber");
 
-    async function startParcel(stage: "king" | "lincoln" | "gandhi" | "chamber", decisionId: string | null) {
+    try {
       const response = await fetch("/api/council/parcel", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(
-          stage === "king"
-            ? { stage, question, context, background: true }
-            : { stage, decisionId, background: true },
-        ),
+        body: JSON.stringify({ question, context, background: true }),
       });
-
       const raw = await response.text();
-      let payload: { error?: string; decision_id?: string } = {};
-      try {
-        payload = JSON.parse(raw);
-      } catch {
-        payload = { error: raw.slice(0, 500) || `Server returned HTTP ${response.status}.` };
+      let started: { error?: string; decision_id?: string } = {};
+      try { started = JSON.parse(raw); }
+      catch { started = { error: raw.slice(0, 500) || "The server returned an invalid response." }; }
+      if (!response.ok || !started.decision_id) {
+        throw new Error(started.error ?? "Could not start the shared-table deliberation.");
       }
-      if (!response.ok && response.status !== 202) {
-        throw new Error(payload.error ?? `Could not start Council parcel ${stage}.`);
-      }
-      return payload;
-    }
 
-    async function waitForParcel(stage: "king" | "lincoln" | "gandhi" | "chamber", decisionId: string) {
-      let transientFetchFailures = 0;
+      let completed = false;
       for (let attempt = 0; attempt < 140; attempt += 1) {
-        let response: Response;
-        try {
-          response = await fetch(`/api/council/parcel?decisionId=${encodeURIComponent(decisionId)}`, {
-            cache: "no-store",
-          });
-          transientFetchFailures = 0;
-        } catch (err) {
-          transientFetchFailures += 1;
-          if (transientFetchFailures >= 5) {
-            throw new Error(
-              `Council status connection failed after 5 retries: ${err instanceof Error ? err.message : "network error"}`,
-            );
-          }
-          await new Promise((resolve) => setTimeout(resolve, 3000));
-          continue;
-        }
-        const raw = await response.text();
+        const statusResponse = await fetch(
+          "/api/council/parcel?decisionId=" + encodeURIComponent(started.decision_id),
+          { cache: "no-store" },
+        );
+        const statusRaw = await statusResponse.text();
         let payload: {
           error?: string;
           status?: string;
           final_advice?: string | null;
-          parcel_stage?: string;
-          parcel_error?: string | null;
-          parcel_failed_stage?: string | null;
           complete?: boolean;
           gate_evaluation?: {
             preservation_of_life?: { passed: boolean; explanation: string };
@@ -104,61 +78,28 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
             gandhi?: { passed: boolean; explanation: string };
           } | null;
         } = {};
-        try {
-          payload = JSON.parse(raw);
-        } catch {
-          payload = { error: raw.slice(0, 500) || `Server returned HTTP ${response.status}.` };
-        }
-        if (!response.ok) throw new Error(payload.error ?? `Could not read Council parcel status.`);
-        if (payload.parcel_error) {
-          throw new Error(`${payload.parcel_failed_stage ?? stage}: ${payload.parcel_error}`);
-        }
-        const complete = stage === "chamber"
-          ? payload.complete === true
-          : payload.parcel_stage === stage;
-        if (complete) return payload;
-        await new Promise((resolve) => setTimeout(resolve, 3000));
-      }
-      throw new Error(`Council parcel ${stage} did not complete within the polling window.`);
-    }
+        try { payload = JSON.parse(statusRaw); }
+        catch { payload = { error: statusRaw.slice(0, 500) || "Could not read Council status." }; }
+        if (!statusResponse.ok) throw new Error(payload.error ?? "Could not read Council status.");
 
-    try {
-      let decisionId: string | null = null;
-      let finalPayload: {
-        status: string;
-        final_advice: string | null;
-        supreme_gate: { passed: boolean; explanation: string };
-        authority_checks: Record<string, boolean>;
-      } | null = null;
-
-      const stages = ["king", "lincoln", "gandhi", "chamber"] as const;
-      for (const stage of stages) {
-        setParcelStage(stage);
-        const started = await startParcel(stage, decisionId);
-        if (started.decision_id) decisionId = started.decision_id;
-        if (!decisionId) throw new Error("Council did not return a decision ID.");
-
-        const payload = await waitForParcel(stage, decisionId);
-        if (stage === "chamber") {
+        if (payload.complete) {
           const gates = payload.gate_evaluation;
           if (!gates?.preservation_of_life || !gates.king || !gates.lincoln || !gates.gandhi) {
-            throw new Error("Council Chamber completed without a complete gate evaluation.");
+            throw new Error("The shared deliberation completed without a complete gate evaluation.");
           }
-          finalPayload = {
+          setResult({
             status: payload.status ?? "no_consensus",
             final_advice: payload.final_advice ?? null,
             supreme_gate: gates.preservation_of_life,
-            authority_checks: {
-              king: gates.king.passed,
-              lincoln: gates.lincoln.passed,
-              gandhi: gates.gandhi.passed,
-            },
-          };
+            authority_checks: { king: gates.king.passed, lincoln: gates.lincoln.passed, gandhi: gates.gandhi.passed },
+          });
+          completed = true;
+          break;
         }
+        if (payload.error && payload.status !== "deliberating") throw new Error(payload.error);
+        await new Promise((resolve) => setTimeout(resolve, 3000));
       }
-
-      if (!finalPayload) throw new Error("Council Chamber did not return a final result.");
-      setResult(finalPayload);
+      if (!completed) throw new Error("The Council did not complete within the polling window.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Council deliberation failed.");
     } finally {
@@ -288,7 +229,7 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
       <section className="main">
         <header className="topbar">
           <div><p className="eyebrow">COUNCIL / {active.toUpperCase()}</p><h1>{active}</h1></div>
-          <div className="header-status"><span className="pulse" />Autonomous · three-voice consensus</div>
+          <div className="header-status"><span className="pulse" />Autonomous · shared-table deliberation</div>
         </header>
 
         <div className="content">
@@ -299,7 +240,7 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
                   <span className="section-kicker">AN AUTONOMOUS DELIBERATIVE COUNCIL</span>
                   <h2>Three voices. One collective judgment.</h2>
                   <p>
-                    King, Lincoln, and Gandhi are represented as interpretive voices. Each independently tests proposed advice against documented principles. Council acts only when the collective advice survives all three principle checks.
+                    King, Lincoln, and Gandhi are represented as interpretive voices. All three sit together in one shared deliberation, challenge one another, and produce one integrated Council response. Their principles remain distinct; the deliberation itself is not split into separate rounds.
                   </p>
                   <div className="hero-actions">
                     <button className="primary" onClick={() => setActive("Conversations")}>Open conversations</button>
@@ -311,7 +252,7 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
 
               <section className="stats">
                 <div><span>MODE</span><strong>AUTONOMOUS</strong><small>No human approval gate</small></div>
-                <div><span>VOICES</span><strong>03</strong><small>Independent principle checks</small></div>
+                <div><span>VOICES</span><strong>03</strong><small>One shared-table deliberation</small></div>
                 <div><span>CONSENSUS</span><strong>{consensusCount}</strong><small>Collective decisions recorded</small></div>
                 <div><span>CONVERSATIONS</span><strong>{data.conversations.length}</strong><small>Stored in Supabase</small></div>
               </section>
@@ -340,10 +281,10 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
                   {latest ? (
                     <>
                       <span className="draft-type">{latest.action_type ?? "none"} · {formatTime(latest.created_at)}</span>
-                      <blockquote>{latest.final_advice ?? "The three voices are still deliberating."}</blockquote>
+                      <blockquote>{latest.final_advice ?? "The three historical perspectives are deliberating together."}</blockquote>
                     </>
                   ) : (
-                    <div className="empty-state-inline">No decision has been recorded yet. When a question arrives, each voice will reason independently before Council reaches consensus.</div>
+                    <div className="empty-state-inline">No decision has been recorded yet. When a question arrives, Lincoln, King, and Gandhi will consider it together in one deliberation and return one Council response.</div>
                   )}
                 </div>
               </section>
@@ -376,10 +317,10 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
               </div>
               <div className="thread panel">
                 <span className="section-kicker">COUNCIL METHOD</span>
-                <h2>Advice must survive all three tests.</h2>
-                <p className="thread-intro">Consensus means the best collective advice the three voices can give, not a simple majority vote.</p>
+                <h2>One table. One deliberation. One Council response.</h2>
+                <p className="thread-intro">Lincoln, King, and Gandhi consider the question together. Their distinct principles are weighed in one shared conversation; genuine disagreement is retained rather than hidden.</p>
                 {councilVoices.map((voice) => (
-                  <div className="voice-turn" key={voice.id}><b>{voice.name}</b><p>Independently examine the question, relevant evidence, and whether the proposed advice conflicts with this voice's documented principles.</p></div>
+                  <div className="voice-turn" key={voice.id}><b>{voice.name}</b><p>Bring this historical perspective into the shared discussion, challenge the other perspectives where needed, and test the proposed response against its documented principles.</p></div>
                 ))}
                 <div className="council-position"><span className="section-kicker">CONSENSUS RULE</span><p>No action when the proposed advice violates a core principle of any voice. Revise, deliberate again, or decline.</p></div>
               </div>
@@ -391,11 +332,11 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
           {active === "Create Post" && (
             <section className="composer panel">
               <span className="section-kicker">COUNCIL QUESTION</span>
-              <h2>Give the Council something to deliberate.</h2>
+              <h2>Bring the Council to the table.</h2>
               <label>Question<input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="What should the Council consider?" /></label>
               <label>Context<textarea value={context} onChange={(event) => setContext(event.target.value)} rows={7} placeholder="Evidence, circumstances, or conversation context..." /></label>
-              <button className="primary" disabled={running || !question.trim()} onClick={deliberate}>{running ? `Council parcel: ${parcelStage ?? "starting"}…` : "Begin deliberation"}</button>
-              <div className="approval-note">The supreme preservation-of-life gate is absolute. Then King, Lincoln, and Gandhi must independently pass their authority tests. There is no human approval gate.</div>
+              <button className="primary" disabled={running || !question.trim()} onClick={deliberate}>{running ? `Council deliberating together…` : "Begin deliberation"}</button>
+              <div className="approval-note">One NVIDIA request brings Lincoln, Martin Luther King Jr., and Gandhi into a single shared-table deliberation. One integrated response is returned and checked against the Council Constitution.</div>
               {error && <div className="approval-note">{error}</div>}
               {result && (
                 <div className="panel">
@@ -507,7 +448,7 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
                       <label>Corrected response<textarea value={correction} onChange={(event) => setCorrection(event.target.value)} rows={8} /></label>
                       <label>Guidance for Council<textarea value={guidance} onChange={(event) => setGuidance(event.target.value)} rows={4} placeholder="Optional context for the next deliberation..." /></label>
                       <button className="primary" disabled={resolving || !correction.trim()} onClick={resolveSelectedEscalation}>{resolving ? "Rechecking constitutional gates…" : "Approve corrected response & continue"}</button>
-                      <div className="approval-note">The corrected response is rechecked against the Supreme gate and all three voice authorities. Admin guidance cannot override a gate.</div>
+                      <div className="approval-note">The corrected response is checked against the Council Constitution and all three historical perspectives. Admin guidance cannot override a constitutional gate.</div>
                     </div>
                   )}
                   {selectedEscalation.status === "resolved" && <div className="approval-note">Resolved. The corrected response passed the constitutional review and is marked ready to publish.</div>}
@@ -518,7 +459,7 @@ export default function CouncilDashboard({ data }: { data: DashboardData }) {
 
           {active === "Settings" && (
             <section className="settings-grid">
-              <div className="panel"><span className="section-kicker">IDENTITY</span><h2>Council</h2><p>Three fictionalized interpretive voices deliberating together: Martin Luther King Jr., Abraham Lincoln, and Mohandas Karamchand Gandhi.</p><div className="setting-row"><span>External action gate</span><strong>Three-voice consensus</strong></div><div className="setting-row"><span>Human approval</span><strong>Not required</strong></div></div>
+              <div className="panel"><span className="section-kicker">IDENTITY</span><h2>Council</h2><p>Three historical perspectives considered together in one shared deliberation: Abraham Lincoln, Martin Luther King Jr., and Mohandas Karamchand Gandhi.</p><div className="setting-row"><span>External action gate</span><strong>Three-voice consensus</strong></div><div className="setting-row"><span>Human approval</span><strong>Not required</strong></div></div>
               <div className="panel"><span className="section-kicker">ACCESS</span><h2>Open workspace</h2><p>Council no longer requires an account or sign-in handshake. The workspace is available directly.</p><div className="setting-row"><span>Authentication</span><strong>Disabled</strong></div><div className="setting-row"><span>Database</span><strong>Supabase</strong></div></div>
             </section>
           )}
