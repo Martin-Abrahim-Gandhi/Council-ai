@@ -1,13 +1,10 @@
 import { after, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase-server";
-import { runCouncilParcel } from "@/lib/council-engine";
+import { runCouncil } from "@/lib/council-engine";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
-
-const STAGES = ["king", "lincoln", "gandhi", "chamber"] as const;
-type Stage = (typeof STAGES)[number];
 
 export async function POST(request: Request) {
   const supabase = await createSupabaseServerClient();
@@ -15,112 +12,92 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    const stage = body.stage as Stage;
-    if (!STAGES.includes(stage)) {
-      return NextResponse.json({ error: "Invalid Council parcel." }, { status: 400 });
+    const question = typeof body.question === "string" ? body.question.trim() : "";
+    const context = typeof body.context === "string" ? body.context : "";
+    const conversationId = typeof body.conversationId === "string" ? body.conversationId : null;
+    const publishTarget = body.publishTarget && typeof body.publishTarget === "object" ? body.publishTarget : undefined;
+    const suppliedDecisionId = typeof body.decisionId === "string" ? body.decisionId : null;
+
+    if (!question && !suppliedDecisionId) {
+      return NextResponse.json({ error: "Question is required." }, { status: 400 });
     }
 
-    const input = {
-      stage,
-      decisionId: typeof body.decisionId === "string" ? body.decisionId : null,
-      question: typeof body.question === "string" ? body.question : "",
-      context: typeof body.context === "string" ? body.context : "",
-      conversationId: typeof body.conversationId === "string" ? body.conversationId : null,
-      publishTarget: body.publishTarget && typeof body.publishTarget === "object" ? body.publishTarget : undefined,
-      userId: String(userId),
-    } as const;
-
     if (body.background === true) {
-      let decisionId = input.decisionId;
-
-      if (stage === "king" && !decisionId) {
+      let decisionId = suppliedDecisionId;
+      if (!decisionId) {
         const { data, error } = await supabase.from("council_decisions").insert({
-          user_id: input.userId,
-          conversation_id: input.conversationId,
-          question: input.question.trim(),
-          context: { text: input.context, engine_version: "3.0.0", parcel_protocol: true },
+          user_id: userId,
+          conversation_id: conversationId,
+          question,
+          context: { text: context, engine_version: "4.0.0", deliberation_mode: "shared_table_single_response" },
           status: "deliberating",
-          action_type: input.publishTarget?.kind === "comment" ? "reply" : "post",
-          action_payload: input.publishTarget ? {
-            action_kind: input.publishTarget.kind,
-            ...(input.publishTarget.postId ? { moltbook_parent_post_id: input.publishTarget.postId } : {}),
-            ...(input.publishTarget.commentId ? { moltbook_parent_comment_id: input.publishTarget.commentId } : {}),
+          action_type: publishTarget?.kind === "comment" ? "reply" : "post",
+          action_payload: publishTarget ? {
+            action_kind: publishTarget.kind,
+            ...(publishTarget.postId ? { moltbook_parent_post_id: publishTarget.postId } : {}),
+            ...(publishTarget.commentId ? { moltbook_parent_comment_id: publishTarget.commentId } : {}),
           } : {},
         }).select("id").single();
-
-        if (error || !data) {
-          throw new Error(`Could not create Council decision: ${error?.message ?? "unknown error"}`);
-        }
+        if (error || !data) throw new Error("Could not create Council decision: " + (error?.message ?? "unknown error"));
         decisionId = data.id;
-      }
-
-      if (!decisionId) {
-        throw new Error("decisionId is required for this Council parcel.");
       }
 
       after(async () => {
         try {
-          await runCouncilParcel({ ...input, decisionId });
+          await runCouncil({ question, context, userId, conversationId, publishTarget, decisionId: decisionId ?? undefined });
         } catch (error) {
-          const message = error instanceof Error ? error.message : "Council parcel failed.";
-          console.error("[council:parcel] background failure", { stage, decisionId, error: message });
-          const { data: failedDecision } = await supabase
-            .from("council_decisions")
-            .select("action_payload")
-            .eq("id", decisionId)
-            
-            .single();
+          const message = error instanceof Error ? error.message : "Council deliberation failed.";
+          console.error("[council:shared-table] background failure", { decisionId, error: message });
+          const { data: failedDecision } = await supabase.from("council_decisions")
+            .select("action_payload").eq("id", decisionId).single();
           await supabase.from("council_decisions").update({
             action_payload: {
               ...((failedDecision?.action_payload ?? {}) as Record<string, unknown>),
-              parcel_error: message,
-              parcel_failed_stage: stage,
+              deliberation_mode: "shared_table_single_response",
+              last_error: message,
             },
           }).eq("id", decisionId);
         }
       });
-
-      return NextResponse.json({ decision_id: decisionId, stage, queued: true }, { status: 202 });
+      return NextResponse.json({
+        decision_id: decisionId,
+        status: "deliberating",
+        queued: true,
+        deliberation_mode: "shared_table_single_response",
+      }, { status: 202 });
     }
 
-    const result = await runCouncilParcel(input);
+    const result = await runCouncil({
+      question, context, userId, conversationId, publishTarget,
+      decisionId: suppliedDecisionId ?? undefined,
+    });
     return NextResponse.json(result);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Council parcel failed.";
+    const message = error instanceof Error ? error.message : "Council deliberation failed.";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
 export async function GET(request: Request) {
   const supabase = await createSupabaseServerClient();
-  const userId: string | null = null;
-
   const decisionId = new URL(request.url).searchParams.get("decisionId");
-  if (!decisionId) {
-    return NextResponse.json({ error: "decisionId is required." }, { status: 400 });
-  }
+  if (!decisionId) return NextResponse.json({ error: "decisionId is required." }, { status: 400 });
 
-  const { data: decision, error } = await supabase
-    .from("council_decisions")
-    .select("id,status,final_advice,action_payload")
-    .eq("id", decisionId)
-    
-    .single();
-
-  if (error || !decision) {
-    return NextResponse.json({ error: "Council decision not found." }, { status: 404 });
-  }
+  const { data: decision, error } = await supabase.from("council_decisions")
+    .select("id,status,final_advice,action_payload,principle_check").eq("id", decisionId).single();
+  if (error || !decision) return NextResponse.json({ error: "Council decision not found." }, { status: 404 });
 
   const payload = (decision.action_payload ?? {}) as Record<string, unknown>;
   return NextResponse.json({
     decision_id: decision.id,
     status: decision.status,
     final_advice: decision.final_advice,
-    parcel_stage: typeof payload.parcel_stage === "string" ? payload.parcel_stage : "created",
-    parcel_error: typeof payload.parcel_error === "string" ? payload.parcel_error : null,
-    parcel_failed_stage: typeof payload.parcel_failed_stage === "string" ? payload.parcel_failed_stage : null,
-    complete: payload.parcel_stage === "chamber",
-    gate_evaluation: payload.gate_evaluation ?? null,
-    voice_support: payload.voice_support ?? null,
+    deliberation_mode: payload.deliberation_mode ?? "shared_table_single_response",
+    perspective_notes: payload.perspective_notes ?? null,
+    contentions: payload.contentions ?? [],
+    gate_evaluation: payload.gate_evaluation ?? decision.principle_check?.voices ?? null,
+    voice_support: payload.voice_support ?? decision.principle_check?.voice_support ?? null,
+    complete: ["consensus", "awaiting_admin", "no_consensus"].includes(decision.status),
+    error: payload.last_error ?? null,
   });
 }
