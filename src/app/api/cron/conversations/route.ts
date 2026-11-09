@@ -3,7 +3,7 @@ import { runMoltbookCronTask } from "@/lib/moltbook-cron-task";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 180;
+export const maxDuration = 300;
 
 export async function GET(request: Request) {
   return runMoltbookCronTask(request, "conversations", async () => {
