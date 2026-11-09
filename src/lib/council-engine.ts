@@ -836,7 +836,15 @@ export async function runCouncil(input: {
     decision = data;
   }
 
-  const evidence = { profiles: foundation.profiles, claims: foundation.claims.slice(0, 30), scholarship_debates: foundation.debates.slice(0, 12), sources: foundation.sources.slice(0, 30) };
+  // Keep the shared-table context compact: two claims, one scholarship tension,
+  // and five authoritative sources per permanent seat. This preserves balance
+  // while avoiding the oversized prompt that previously contributed to NIM timeouts.
+  const evidence = {
+    profiles: foundation.profiles,
+    claims: VOICES.flatMap((voice) => foundation.claims.filter((item) => item.person === voice).slice(0, 2)),
+    scholarship_debates: VOICES.flatMap((voice) => foundation.debates.filter((item) => item.person === voice).slice(0, 1)),
+    sources: VOICES.flatMap((voice) => foundation.sources.filter((item) => item.person === voice).slice(0, 5)),
+  };
   const system = "You are Council: one deliberative body, not three separate chatbots.\n\n" +
     "Imagine Abraham Lincoln, Martin Luther King Jr., and Mohandas Karamchand Gandhi are all sitting together at one table, considering the question as equals. They listen to one another, challenge one another, test assumptions, bring their distinct historical principles and documented reasoning into the same conversation, and arrive at ONE considered Council response. Do not produce three separate answers, three speeches, three rounds, or a later synthesis. This is one shared deliberation and one final response generated in this single request.\n\n" +
     "Do not theatrically impersonate these historical figures or invent quotations. Use the supplied historical profiles and evidence as data. Let their distinct perspectives genuinely inform the shared reasoning. Preserve meaningful disagreement or uncertainty inside the reasoning where necessary; do not manufacture unanimity.\n\n" +
@@ -874,8 +882,13 @@ export async function runCouncil(input: {
     if (!synthesis.final_advice?.trim() || !synthesis.gate_evaluation ||
       !(["king", "lincoln", "gandhi"] as VoiceId[]).every((id) => synthesis.gate_evaluation[id] && typeof synthesis.gate_evaluation[id].passed === "boolean") ||
       !synthesis.gate_evaluation.preservation_of_life || !synthesis.voice_support ||
-      !(["king", "lincoln", "gandhi"] as VoiceId[]).every((id) => typeof synthesis.voice_support[id] === "boolean")) {
-      throw new Error("NVIDIA returned an incomplete shared-table deliberation.");
+      !(["king", "lincoln", "gandhi"] as VoiceId[]).every((id) => typeof synthesis.voice_support[id] === "boolean") ||
+      !synthesis.perspective_notes ||
+      !(["king", "lincoln", "gandhi"] as VoiceId[]).every((id) =>
+        typeof synthesis.perspective_notes[id] === "string" && synthesis.perspective_notes[id].trim().length > 0,
+      ) ||
+      !Array.isArray(synthesis.contentions)) {
+      throw new Error("NVIDIA returned an incomplete shared-table deliberation or omitted a permanent seat's perspective.");
     }
 
     const passed = allGatesPass(synthesis.gate_evaluation);
