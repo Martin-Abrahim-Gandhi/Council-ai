@@ -134,7 +134,6 @@ export async function GET(request: Request) {
         deliberated: Number(queueSummary.deliberated ?? 0),
         published:
           Number(pending.published ?? 0) +
-          Number(queueSummary.published ?? 0) +
           Number((topicTraffic as any).published ?? 0) +
           (engagement.seeded ? 1 : 0) +
           Number((discovery as any).engaged ?? 0),
