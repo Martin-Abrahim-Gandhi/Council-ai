@@ -48,7 +48,36 @@ async function enqueueWork(
     priority: number;
   },
 ) {
-  const { data, error } = await supabase.from("council_work_queue").upsert({
+  const now = new Date().toISOString();
+  const { data: existing, error: lookupError } = await supabase.from("council_work_queue")
+    .select("id,status,attempts,available_at")
+    .eq("platform", "moltbook")
+    .eq("external_key", input.externalKey)
+    .maybeSingle();
+  if (lookupError) throw new Error(`Work queue lookup failed: ${lookupError.message}`);
+
+  if (existing) {
+    // Never disturb a worker that currently owns the lease. A still-pending
+    // event may safely revive a terminal queue row, but not reset backoff.
+    const revive = existing.status === "completed" || existing.status === "dead_letter";
+    const patch = {
+      work_type: input.workType,
+      event_id: input.eventId ?? null,
+      thread_id: input.threadId ?? null,
+      agent_name: input.agentName ?? null,
+      priority: input.priority,
+      ...(revive ? { status: "queued", attempts: 0, available_at: now, lease_until: null } : {}),
+      updated_at: now,
+    };
+    const { data, error } = await supabase.from("council_work_queue")
+      .update(patch).eq("id", existing.id)
+      .not("status", "eq", "leased")
+      .select("id").maybeSingle();
+    if (error) throw new Error(`Work queue reconciliation failed: ${error.message}`);
+    return data ?? existing;
+  }
+
+  const { data, error } = await supabase.from("council_work_queue").insert({
     work_type: input.workType,
     platform: "moltbook",
     external_key: input.externalKey,
@@ -57,9 +86,17 @@ async function enqueueWork(
     agent_name: input.agentName ?? null,
     priority: input.priority,
     status: "queued",
-    available_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  }, { onConflict: "platform,external_key", ignoreDuplicates: true }).select("id").maybeSingle();
+    available_at: now,
+    updated_at: now,
+  }).select("id").maybeSingle();
+
+  // Another heartbeat may have inserted the unique external key concurrently.
+  if (error?.code === "23505") {
+    const { data: raced, error: raceError } = await supabase.from("council_work_queue")
+      .select("id,status").eq("platform", "moltbook").eq("external_key", input.externalKey).maybeSingle();
+    if (raceError) throw new Error(`Work queue race recovery failed: ${raceError.message}`);
+    if (raced) return raced;
+  }
   if (error) throw new Error(`Work queue unavailable: ${error.message}`);
   return data;
 }
@@ -207,21 +244,45 @@ export async function processPendingDiscussionEvents(workerLimit = 1) {
   const me = await getMoltbookMe();
   const councilAgentName = String(me?.agent?.name ?? me?.name ?? process.env.MOLTBOOK_AGENT_NAME ?? "");
 
+  const staleDeliberatingBefore = new Date(Date.now() - 10 * 60_000).toISOString();
   const { data: pending, error } = await supabase.from("discussion_events")
-    .select("id,thread_id,post_id,comment_id,parent_comment_id,author_name,content,community,external_event_id,classification")
+    .select("id,thread_id,post_id,comment_id,parent_comment_id,author_name,content,community,external_event_id,classification,decision_id,response_status")
     .eq("platform","moltbook")
-    .eq("response_status","pending")
+    .or(`response_status.eq.pending,and(response_status.eq.deliberating,observed_at.lt.${staleDeliberatingBefore})`)
     .or("external_event_id.like.comment:%,external_event_id.like.post:%,external_event_id.like.topic-traffic:%")
     .order("created_at",{ascending:true})
     .limit(10);
   if (error) throw new Error(`Pending discussion events unavailable: ${error.message}`);
 
   let queued = 0;
+  let reconciledPublished = 0;
   for (const event of pending ?? []) {
     if (councilAgentName && event.author_name === councilAgentName) {
       await supabase.from("discussion_events").update({ response_status:"ignored", response_error:"Ignored Council's own Moltbook comment." }).eq("id",event.id);
       continue;
     }
+
+    // Publication is authoritative. Reconcile it before putting an event back
+    // on the queue, so a lost DB update can never cause a duplicate comment.
+    if (event.decision_id) {
+      const { data: publication } = await supabase.from("moltbook_publications")
+        .select("status,moltbook_comment_id,content")
+        .eq("decision_id", event.decision_id).eq("kind", "comment").maybeSingle();
+      if (publication?.status === "published" && publication.moltbook_comment_id) {
+        await supabase.from("discussion_events").update({
+          response_status: "published",
+          response_content: publication.content ?? null,
+          response_error: null,
+          responded_at: new Date().toISOString(),
+        }).eq("id", event.id);
+        await supabase.from("council_work_queue").update({
+          status: "completed", lease_until: null, last_error: null, updated_at: new Date().toISOString(),
+        }).eq("platform", "moltbook").eq("external_key", event.external_event_id);
+        reconciledPublished++;
+        continue;
+      }
+    }
+
     const { data: relationship } = await supabase.from("discussion_agents")
       .select("interaction_count")
       .eq("platform", "moltbook")
@@ -239,7 +300,7 @@ export async function processPendingDiscussionEvents(workerLimit = 1) {
     queued++;
   }
   const processed = await processCouncilWorkQueue(workerLimit);
-  return { pending_found:(pending ?? []).length, queued, ...processed };
+  return { pending_found:(pending ?? []).length, queued, reconciled_published: reconciledPublished, ...processed };
 }
 
 export async function processCouncilWorkQueue(limit = 1) {
@@ -368,7 +429,8 @@ export async function processCouncilWorkQueue(limit = 1) {
         context,
         userId: null,
         decisionId,
-        timeoutMs: 120_000,
+        // Hobby cron executions are capped; leave time for publication and DB reconciliation.
+        timeoutMs: 42_000,
       });
 
       if (result.status !== "consensus") {
