@@ -6,7 +6,6 @@ import {
   monitorMoltbookDiscussions,
   processPendingDiscussionEvents,
   seedCouncilPostConversation,
-  processCouncilWorkQueue,
   driveCouncilTopicTraffic,
 } from "@/lib/discussion-engine";
 
@@ -84,8 +83,8 @@ export async function GET(request: Request) {
         ? {
             seeded: false,
             skipped: true,
-            reason: pending.published > 0
-              ? "pending_incoming_replies_handled_first"
+            reason: incomingWorkHasPriority
+              ? "incoming_discussion_work_has_priority"
               : "topic_traffic_published",
           }
         : await seedCouncilPostConversation();
@@ -96,8 +95,8 @@ export async function GET(request: Request) {
       engagement.seeded
         ? {
             skipped: true,
-            reason: pending.published > 0
-              ? "pending_incoming_replies_handled_first"
+            reason: incomingWorkHasPriority
+              ? "incoming_discussion_work_has_priority"
               : topicTrafficPublished
                 ? "topic_traffic_published"
                 : "seeded_from_council_post",
