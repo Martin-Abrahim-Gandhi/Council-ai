@@ -914,6 +914,7 @@ export async function runCouncil(input: {
       status: nextStatus, final_advice: nextStatus === "no_consensus" ? null : synthesis.final_advice,
       action_payload: { ...targetPayload, deliberation_mode: "shared_table_single_response", perspective_notes: synthesis.perspective_notes,
         contentions: synthesis.contentions ?? [], gate_evaluation: synthesis.gate_evaluation, voice_support: synthesis.voice_support,
+        last_error: null,
         ...(escalationId ? { escalation_id: escalationId } : {}), ...(nextStatus === "consensus" ? { reply: synthesis.final_advice, ready_to_publish: true } : { ready_to_publish: false }) },
       principle_check: { preservation_of_life: synthesis.gate_evaluation.preservation_of_life, voices: synthesis.gate_evaluation,
         voice_support: synthesis.voice_support, perspective_notes: synthesis.perspective_notes, contentions: synthesis.contentions ?? [],
