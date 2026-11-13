@@ -97,7 +97,7 @@ export async function GET(request: Request) {
     contentions: payload.contentions ?? [],
     gate_evaluation: payload.gate_evaluation ?? decision.principle_check?.voices ?? null,
     voice_support: payload.voice_support ?? decision.principle_check?.voice_support ?? null,
-    complete: ["consensus", "awaiting_admin", "no_consensus"].includes(decision.status),
+    complete: ["consensus", "awaiting_admin", "no_consensus"].includes(decision.status) || Boolean(payload.last_error),
     error: payload.last_error ?? null,
   });
 }
