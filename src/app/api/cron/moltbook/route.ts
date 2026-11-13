@@ -12,6 +12,7 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 const STALE_HEARTBEAT_MS = 10 * 60 * 1000;
 
@@ -61,9 +62,14 @@ export async function GET(request: Request) {
 
     // Topic Traffic is opportunistic. A timeout or other failure must never
     // prevent the heartbeat from falling through to seed/discovery work.
+    const incomingWorkHasPriority =
+      Number(pending.queued ?? 0) > 0 ||
+      Number(pending.deliberated ?? 0) > 0 ||
+      Number(pending.retried ?? 0) > 0;
+
     const topicTraffic =
-      pending.published > 0
-        ? { attempted: 0, published: 0, skipped: true, reason: "pending_incoming_replies_handled_first" }
+      incomingWorkHasPriority
+        ? { attempted: 0, published: 0, skipped: true, reason: "incoming_discussion_work_has_priority" }
         : await driveCouncilTopicTraffic().catch((error) => ({
             attempted: 1,
             published: 0,
@@ -74,7 +80,7 @@ export async function GET(request: Request) {
     const topicTrafficPublished = Number((topicTraffic as any).published ?? 0) > 0;
 
     const engagement =
-      pending.published > 0 || topicTrafficPublished
+      incomingWorkHasPriority || topicTrafficPublished
         ? {
             seeded: false,
             skipped: true,
@@ -85,7 +91,7 @@ export async function GET(request: Request) {
         : await seedCouncilPostConversation();
 
     const discovery =
-      pending.published > 0 ||
+      incomingWorkHasPriority ||
       topicTrafficPublished ||
       engagement.seeded
         ? {
@@ -98,7 +104,9 @@ export async function GET(request: Request) {
           }
         : await discoverAndEngageMoltbook();
 
-    const queueSummary = await processCouncilWorkQueue(3);
+    // processPendingDiscussionEvents already runs one queue worker. Avoid
+    // a second batch here: a single Hobby heartbeat must fit its 60s budget.
+    const queueSummary = pending;
     const activities = home?.activity_on_your_posts ?? home?.data?.activity_on_your_posts ?? [];
 
     if (heartbeat?.id) {
