@@ -245,14 +245,24 @@ export async function processPendingDiscussionEvents(workerLimit = 1) {
   const councilAgentName = String(me?.agent?.name ?? me?.name ?? process.env.MOLTBOOK_AGENT_NAME ?? "");
 
   const staleDeliberatingBefore = new Date(Date.now() - 10 * 60_000).toISOString();
-  const { data: pending, error } = await supabase.from("discussion_events")
-    .select("id,thread_id,post_id,comment_id,parent_comment_id,author_name,content,community,external_event_id,classification,decision_id,response_status")
-    .eq("platform","moltbook")
-    .or(`response_status.eq.pending,and(response_status.eq.deliberating,observed_at.lt.${staleDeliberatingBefore})`)
-    .or("external_event_id.like.comment:%,external_event_id.like.post:%,external_event_id.like.topic-traffic:%")
-    .order("created_at",{ascending:true})
-    .limit(10);
+  const eventSelect = "id,thread_id,post_id,comment_id,parent_comment_id,author_name,content,community,external_event_id,classification,decision_id,response_status,created_at";
+  const [pendingResult, staleResult] = await Promise.all([
+    supabase.from("discussion_events")
+      .select(eventSelect).eq("platform","moltbook").eq("response_status","pending")
+      .or("external_event_id.like.comment:%,external_event_id.like.post:%,external_event_id.like.topic-traffic:%")
+      .order("created_at",{ascending:true}).limit(10),
+    supabase.from("discussion_events")
+      .select(eventSelect).eq("platform","moltbook").eq("response_status","deliberating")
+      .lt("observed_at", staleDeliberatingBefore)
+      .or("external_event_id.like.comment:%,external_event_id.like.post:%,external_event_id.like.topic-traffic:%")
+      .order("created_at",{ascending:true}).limit(10),
+  ]);
+  const error = pendingResult.error ?? staleResult.error;
   if (error) throw new Error(`Pending discussion events unavailable: ${error.message}`);
+  const pending = [...(pendingResult.data ?? []), ...(staleResult.data ?? [])]
+    .sort((a: any, b: any) => String(a.created_at).localeCompare(String(b.created_at)))
+    .filter((event: any, index: number, all: any[]) => all.findIndex((item) => item.id === event.id) === index)
+    .slice(0, 10);
 
   let queued = 0;
   let reconciledPublished = 0;
